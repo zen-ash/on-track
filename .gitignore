@@ -1,0 +1,32 @@
+# macOS
+.DS_Store
+
+# Xcode — user-specific state, never shared
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+DerivedData/
+build/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Supabase CLI local state — contains the linked project ref and temp files
+supabase/.branches/
+supabase/.temp/
+supabase/.env
+
+# Secrets. Nothing here should ever be committed.
+*.p8
+*.p12
+*.mobileprovision
+.env
+.env.*
