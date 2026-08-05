@@ -84,6 +84,61 @@ struct TaskItem: Codable, Identifiable, Hashable, Sendable {
     }
 }
 
+// MARK: - Encoding
+
+extension TaskItem {
+    enum CodingKeys: String, CodingKey {
+        case id, userId, title, notes, status, priority, dueAt, hasTime, recurrence
+        case tags, estimateMinutes, energy, parentId, sortIndex, completedAt
+        case source, createdAt, updatedAt
+    }
+
+    /// Written by hand for one reason: **every key must always be present.**
+    ///
+    /// Swift's synthesised `Codable` uses `encodeIfPresent` for optionals, so a
+    /// nil field is omitted from the JSON rather than sent as null. PostgREST
+    /// requires every object in a bulk insert to carry an identical key set, so
+    /// a batch mixing one task that repeats with one that doesn't is rejected
+    /// outright — "All object keys must match" — and the whole write is lost.
+    /// Emitting explicit nulls keeps the shape uniform no matter what's set.
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(status, forKey: .status)
+        try container.encode(priority, forKey: .priority)
+        try container.encode(hasTime, forKey: .hasTime)
+        try container.encode(tags, forKey: .tags)
+        try container.encode(sortIndex, forKey: .sortIndex)
+        try container.encode(source, forKey: .source)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(updatedAt, forKey: .updatedAt)
+
+        // Optionals: encoded unconditionally so nil becomes an explicit null.
+        try encodeOptional(userId, forKey: .userId, in: &container)
+        try encodeOptional(notes, forKey: .notes, in: &container)
+        try encodeOptional(dueAt, forKey: .dueAt, in: &container)
+        try encodeOptional(recurrence, forKey: .recurrence, in: &container)
+        try encodeOptional(estimateMinutes, forKey: .estimateMinutes, in: &container)
+        try encodeOptional(energy, forKey: .energy, in: &container)
+        try encodeOptional(parentId, forKey: .parentId, in: &container)
+        try encodeOptional(completedAt, forKey: .completedAt, in: &container)
+    }
+
+    private func encodeOptional<T: Encodable>(
+        _ value: T?,
+        forKey key: CodingKeys,
+        in container: inout KeyedEncodingContainer<CodingKeys>
+    ) throws {
+        if let value {
+            try container.encode(value, forKey: key)
+        } else {
+            try container.encodeNil(forKey: key)
+        }
+    }
+}
+
 // MARK: - Derived state
 
 extension TaskItem {
