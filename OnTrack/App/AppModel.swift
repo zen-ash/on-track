@@ -111,12 +111,20 @@ final class AppModel {
     }
 
     func signOut() async {
+        // Send anything still queued while we can still authenticate as this user.
+        await flushPending()
+        await pending.clearAll()
+
         await auth.signOut()
         session = nil
         remoteStore = nil
         remoteAI = nil
         plan = nil
         chatHistory = []
+
+        // The local store is now a mirror of the signed-in user's list, so it
+        // has to be cleared — otherwise their tasks reappear in local mode.
+        try? await localStore.replaceAll([])
         await refresh()
     }
 
@@ -137,23 +145,51 @@ final class AppModel {
         isLoading = true
         defer { isLoading = false }
 
+        // An offline launch can't restore the session, which would otherwise
+        // strand the app in local mode until the next relaunch. Retry here so
+        // regaining connectivity is enough to reconnect.
+        if AppConfig.isBackendConfigured, session == nil,
+           let restored = await auth.restoreSession() {
+            adopt(session: restored)
+        }
+
         // Send anything queued offline before reading, so the server is current.
         await flushPending()
 
+        let outstanding = await pending.snapshot()
+
         do {
             let loaded = try await store.loadAll()
+            // Mirror the server so the list stays readable without a network.
+            if remoteStore != nil {
+                try? await localStore.replaceAll(loaded)
+            }
             // Whatever is still queued never reached the server. Merging it back
             // in is what stops a refresh from deleting work captured offline.
-            let outstanding = await pending.snapshot()
             tasks = Self.merge(
                 server: loaded,
                 pendingUpserts: outstanding.upserts,
                 pendingDeletes: Set(outstanding.deletes)
             )
-            await syncReminders()
         } catch {
-            show(error)
+            // Offline. Fall back to the last synced copy plus anything queued,
+            // rather than showing an empty list — reading the list is the one
+            // thing that should never require a network.
+            guard remoteStore != nil else {
+                show(error)
+                return
+            }
+            let cached = (try? await localStore.loadAll()) ?? []
+            tasks = Self.merge(
+                server: cached,
+                pendingUpserts: outstanding.upserts,
+                pendingDeletes: Set(outstanding.deletes)
+            )
+            // Deliberately silent: being offline is a state, not an error, and
+            // the queue means nothing is at risk.
         }
+
+        await syncReminders()
     }
 
     /// Local edits win: they are strictly newer than whatever the server holds.

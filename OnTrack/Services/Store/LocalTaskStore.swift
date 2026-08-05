@@ -38,6 +38,17 @@ actor LocalTaskStore: TaskStore {
         try persist(current)
     }
 
+    /// Overwrites the file with exactly these tasks.
+    ///
+    /// Used to mirror the server after a successful fetch, so the list is still
+    /// readable with no network. Deletions made on another device propagate
+    /// because this replaces rather than merges.
+    func replaceAll(_ tasks: [TaskItem]) throws {
+        let current = Dictionary(tasks.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+        cache = current
+        try persist(current)
+    }
+
     private func loadAllAsDictionary() async throws -> [UUID: TaskItem] {
         if let cache { return cache }
         _ = try await loadAll()

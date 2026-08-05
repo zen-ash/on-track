@@ -63,12 +63,22 @@ actor SupabaseAuth {
 
         guard let current = cached else { return nil }
         if current.isExpired {
-            guard let refreshed = try? await refresh(using: current.refreshToken) else {
-                Keychain.remove(Self.keychainAccount)
-                cached = nil
+            do {
+                return try await refresh(using: current.refreshToken)
+            } catch {
+                // Only a definitive rejection from the server means the session
+                // is really gone. A network failure must never discard it: for
+                // an anonymous account the refresh token *is* the account, so
+                // dropping it after one offline launch would orphan every task
+                // on the server with no way back in.
+                if let storeError = error as? StoreError,
+                   case .server(let status, _) = storeError,
+                   status == 400 || status == 401 {
+                    Keychain.remove(Self.keychainAccount)
+                    cached = nil
+                }
                 return nil
             }
-            return refreshed
         }
         return current
     }
@@ -122,6 +132,8 @@ actor SupabaseAuth {
 
         var request = URLRequest(url: components.url!)
         request.httpMethod = "POST"
+        // Short, so an offline launch fails fast instead of stalling a refresh.
+        request.timeoutInterval = 15
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(AppConfig.supabaseAnonKey, forHTTPHeaderField: "apikey")
         request.setValue("Bearer \(accessToken ?? AppConfig.supabaseAnonKey)", forHTTPHeaderField: "Authorization")
