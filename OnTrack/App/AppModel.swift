@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import Observation
 import SwiftUI
 
@@ -45,6 +46,8 @@ final class AppModel {
     private var remoteAI: RemoteAIService?
     private let auth = SupabaseAuth()
     private let reminders = Reminders()
+    private let pending = PendingWrites()
+    private let connectivity = NWPathMonitor()
 
     /// The store that owns the truth right now.
     private var store: any TaskStore {
@@ -66,6 +69,7 @@ final class AppModel {
             adopt(session: restored)
         }
         await refresh()
+        startWatchingConnectivity()
 
         #if DEBUG
         if DemoSeed.isRequested && tasks.isEmpty {
@@ -132,12 +136,78 @@ final class AppModel {
     func refresh() async {
         isLoading = true
         defer { isLoading = false }
+
+        // Send anything queued offline before reading, so the server is current.
+        await flushPending()
+
         do {
-            tasks = try await store.loadAll()
+            let loaded = try await store.loadAll()
+            // Whatever is still queued never reached the server. Merging it back
+            // in is what stops a refresh from deleting work captured offline.
+            let outstanding = await pending.snapshot()
+            tasks = Self.merge(
+                server: loaded,
+                pendingUpserts: outstanding.upserts,
+                pendingDeletes: Set(outstanding.deletes)
+            )
             await syncReminders()
         } catch {
             show(error)
         }
+    }
+
+    /// Local edits win: they are strictly newer than whatever the server holds.
+    private static func merge(
+        server: [TaskItem],
+        pendingUpserts: [TaskItem],
+        pendingDeletes: Set<UUID>
+    ) -> [TaskItem] {
+        var byID = Dictionary(server.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+        for item in pendingUpserts { byID[item.id] = item }
+        for id in pendingDeletes { byID.removeValue(forKey: id) }
+        return Array(byID.values)
+    }
+
+    /// Best effort. If it fails we're still offline and the queue simply waits.
+    private func flushPending() async {
+        guard remoteStore != nil else { return }
+        let outstanding = await pending.snapshot()
+        guard !outstanding.upserts.isEmpty || !outstanding.deletes.isEmpty else { return }
+
+        if !outstanding.upserts.isEmpty {
+            do {
+                try await store.upsert(outstanding.upserts)
+                await pending.clearUpserts(outstanding.upserts.map(\.id))
+            } catch {
+                return
+            }
+        }
+        if !outstanding.deletes.isEmpty {
+            do {
+                try await store.delete(ids: outstanding.deletes)
+                await pending.clearDeletes(outstanding.deletes)
+            } catch {
+                return
+            }
+        }
+    }
+
+    /// Flush the moment the network comes back, rather than waiting for the
+    /// user to background and reopen the app.
+    private func startWatchingConnectivity() {
+        // @Sendable is required: NWPathMonitor's handler is not declared
+        // Sendable, so without it the closure inherits this type's @MainActor
+        // isolation and traps when called on the monitor's own queue.
+        connectivity.pathUpdateHandler = { @Sendable [weak self] path in
+            guard path.status == .satisfied else { return }
+            Task { @MainActor in
+                guard let self, self.remoteStore != nil else { return }
+                if await !self.pending.isEmpty {
+                    await self.refresh()
+                }
+            }
+        }
+        connectivity.start(queue: DispatchQueue(label: "com.aayush.ontrack.connectivity"))
     }
 
     // MARK: - Derived views of the list
@@ -221,8 +291,7 @@ final class AppModel {
             try await store.upsert(toWrite)
             await syncReminders()
         } catch {
-            show(error)
-            await refresh()
+            await queueForLater(toWrite, error: error)
         }
     }
 
@@ -237,7 +306,7 @@ final class AppModel {
             try await store.upsert(items)
             await syncReminders()
         } catch {
-            show(error)
+            await queueForLater(items, error: error)
         }
     }
 
@@ -249,7 +318,7 @@ final class AppModel {
             try await store.upsert([updated])
             await syncReminders()
         } catch {
-            show(error)
+            await queueForLater([updated], error: error)
         }
     }
 
@@ -261,8 +330,20 @@ final class AppModel {
             try await store.delete(ids: ids)
             await syncReminders()
         } catch {
-            show(error)
+            await pending.enqueueDeletes(ids)
         }
+    }
+
+    /// A write that didn't reach the server is queued rather than lost, and the
+    /// message says so — "couldn't reach the model" was misleading when the
+    /// task itself also hadn't been saved.
+    private func queueForLater(_ items: [TaskItem], error: Error) async {
+        guard remoteStore != nil else {
+            show(error)
+            return
+        }
+        await pending.enqueueUpserts(items)
+        show(message: "Saved on this phone. It'll sync when you're back online.")
     }
 
     private func syncReminders() async {
@@ -299,8 +380,11 @@ final class AppModel {
             // Never lose what someone said. If the model is unreachable, parse
             // it on device and keep going.
             if let fallback = try? await localAI.capture(text: trimmed, existingTitles: []), !fallback.tasks.isEmpty {
+                // Shown first so that if the write also fails, the sync notice
+                // from `add` replaces it — where the task ended up matters more
+                // than which parser produced it.
+                show(message: "Parsed on this phone — the model wasn't reachable.")
                 await add(fallback.tasks, source: source)
-                show(message: "Saved offline — couldn't reach the model.")
                 return fallback
             }
             show(error)
