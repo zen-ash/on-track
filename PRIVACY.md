@@ -9,8 +9,8 @@
 On Track is a todo app. This policy explains exactly what it collects, where that
 data goes, and how to delete it.
 
-**Contact:** [YOUR EMAIL ADDRESS]
-**Provided by:** [YOUR NAME OR COMPANY]
+**Contact:** kaayush2804@gmail.com
+**Provided by:** Aayush Kumar
 
 ---
 
@@ -96,4 +96,4 @@ new date, and the change will be noted in the app's release notes.
 
 Depending on where you live, you may have the right to access, correct, export,
 or delete your data. The app already lets you read and delete everything it
-holds. For anything else, email [YOUR EMAIL ADDRESS].
+holds. For anything else, email kaayush2804@gmail.com.
