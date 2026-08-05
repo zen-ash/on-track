@@ -458,7 +458,13 @@ final class AppModel {
                 // Shown first so that if the write also fails, the sync notice
                 // from `add` replaces it — where the task ended up matters more
                 // than which parser produced it.
-                show(message: "Parsed on this phone — the model wasn't reachable.")
+                if case AIError.rateLimited(let message) = error {
+                    // Hitting a cap isn't a failure to explain away: say what
+                    // happened, and note the task was still captured.
+                    show(message: "\(message) Saved using on-device parsing.")
+                } else {
+                    show(message: "Parsed on this phone — the model wasn't reachable.")
+                }
                 await add(fallback.tasks, source: source)
                 return fallback
             }

@@ -130,7 +130,11 @@ struct RemoteAIService: AIService {
             throw AIError.badResponse("no HTTP response")
         }
         guard (200..<300).contains(http.statusCode) else {
-            throw AIError.server(status: http.statusCode, message: SupabaseAuth.errorMessage(from: data))
+            let message = SupabaseAuth.errorMessage(from: data)
+            if http.statusCode == 429 {
+                throw AIError.rateLimited(message)
+            }
+            throw AIError.server(status: http.statusCode, message: message)
         }
 
         do {

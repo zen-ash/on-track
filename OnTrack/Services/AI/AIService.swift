@@ -150,6 +150,9 @@ protocol AIService: Sendable {
 enum AIError: LocalizedError {
     case notConfigured
     case notSignedIn
+    /// Server-side usage cap. Carries the server's wording so the reason (daily
+    /// cap vs too-fast) survives to the UI.
+    case rateLimited(String)
     case transport(String)
     case server(status: Int, message: String)
     case badResponse(String)
@@ -161,6 +164,8 @@ enum AIError: LocalizedError {
             return "AI isn't connected yet. Add your Supabase details in AppConfig.swift and deploy the ai function."
         case .notSignedIn:
             return "Sign in to use this."
+        case .rateLimited(let message):
+            return message
         case .transport(let detail):
             return "Network problem: \(detail)"
         case .server(let status, let message):

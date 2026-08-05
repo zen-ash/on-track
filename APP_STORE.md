@@ -108,7 +108,7 @@ from the server.
 - [ ] Screenshots for every required iPhone size
 - [ ] App name availability confirmed — "On Track" is generic and may be taken
 - [ ] Support URL (a page with a contact email is enough)
-- [ ] **Usage limits in place** — see below
+- [x] **Usage limits in place** — see below
 - [ ] Test account deletion once on a real device before submitting
 
 ---
@@ -130,5 +130,29 @@ Before public release, do at least one of:
 
 The free Supabase tier will also not survive meaningful traffic.
 
-There is no rate limiting in the code today. Publishing without it is a financial
-risk, not a review risk.
+**Per-user limits are now enforced** in `supabase/migrations/0002_ai_usage_limits.sql`
+and checked by the `ai` function before any model call:
+
+| Action | Per user, rolling 24h |
+| --- | --- |
+| Capture | 100 |
+| Chat | 30 |
+| Breakdown | 20 |
+| Plan | 10 |
+
+Plus 10 requests/minute across all actions, so a stuck retry loop can't run up a
+bill. Worst case is roughly $0.43 per user per day; realistic use is under $1 a
+month. Limits live in the `claim_ai_quota` function — edit the CASE block and
+re-push to change them.
+
+The counters are in a table with RLS enabled and **no policies**, so they are
+unreachable from the client. Only the SECURITY DEFINER function can touch them,
+which means a user cannot delete their own rows to reset a quota.
+
+**Still do this:** set a hard monthly budget cap in the OpenAI dashboard
+(Billing → Limits). It is the only control that survives a bug in the limiter.
+
+Per-user caps stop accidents and casual overuse. They do **not** stop a
+determined abuser, because anonymous sign-up is free and unlimited — someone can
+mint fresh accounts. If that ever becomes real, require Sign in with Apple for
+the AI features and leave capture available to guests.

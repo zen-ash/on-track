@@ -44,6 +44,12 @@ Deno.serve(async (req) => {
     const now: string = body.now ?? new Date().toISOString();
     const timezone: string = body.timezone ?? "UTC";
 
+    // Caps what one account can spend of the shared key. Claimed before any
+    // model call, and recorded in the same statement that checks it so two
+    // concurrent requests can't both take the last slot.
+    const quota = await claimQuota(supabase, body.action);
+    if (!quota.allowed) return fail(429, quotaMessage(quota.reason));
+
     switch (body.action) {
       case "capture":
         // The Swift client encodes keys as snake_case.
@@ -67,6 +73,32 @@ function ok(payload: unknown) {
   return new Response(JSON.stringify(payload), {
     headers: { ...CORS, "Content-Type": "application/json" },
   });
+}
+
+/// Fails closed. If the quota can't be verified we decline rather than spend
+/// money on an unverified request — capture degrades to on-device parsing, so
+/// the cost of being cautious here is low.
+async function claimQuota(supabase: SupabaseClient, action: string) {
+  const { data, error } = await supabase.rpc("claim_ai_quota", { p_action: action });
+  if (error) {
+    console.error("quota check failed", error);
+    return { allowed: false, reason: "unavailable" };
+  }
+  const row = Array.isArray(data) ? data[0] : data;
+  return { allowed: row?.allowed === true, reason: String(row?.reason ?? "unknown") };
+}
+
+function quotaMessage(reason: string): string {
+  switch (reason) {
+    case "daily":
+      return "You've used today's limit for this. It frees up again over the next 24 hours.";
+    case "burst":
+      return "Too many requests in the last minute. Give it a moment.";
+    case "unauthenticated":
+      return "Sign in to use this.";
+    default:
+      return "Couldn't check your usage limit. Try again shortly.";
+  }
 }
 
 function fail(status: number, message: string) {
