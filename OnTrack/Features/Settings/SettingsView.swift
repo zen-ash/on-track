@@ -4,6 +4,8 @@ struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
 
+    @State private var isConfirmingDelete = false
+
     var body: some View {
         ZStack {
             PaperBackground()
@@ -19,6 +21,14 @@ struct SettingsView: View {
                 .padding(.horizontal, 22)
                 .padding(.vertical, 18)
             }
+        }
+        .alert("Delete your account?", isPresented: $isConfirmingDelete) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete everything", role: .destructive) {
+                Task { await model.deleteAccount() }
+            }
+        } message: {
+            Text("Your account and every task will be permanently deleted from the server. This can't be undone.")
         }
     }
 
@@ -159,6 +169,33 @@ struct SettingsView: View {
                         Task { await model.signOut() }
                     }
                     .buttonStyle(InkOutlineButtonStyle(seed: 1024))
+
+                    RoughDivider(seed: 1025, opacity: 0.25).padding(.vertical, 4)
+
+                    Button {
+                        isConfirmingDelete = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            if model.isDeletingAccount {
+                                ProgressView().tint(Ink.alarm).scaleEffect(0.8)
+                            } else {
+                                Image(systemName: "trash.fill").font(.system(size: 12, weight: .black))
+                            }
+                            Text(model.isDeletingAccount ? "Deleting…" : "Delete account and all data")
+                        }
+                        .font(InkType.stamp(11))
+                        .stampCase()
+                        .foregroundStyle(Ink.alarm)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(model.isDeletingAccount)
+
+                    Text(model.session?.isAnonymous == true
+                         ? "Permanently deletes your account and every task. You're signed in as a guest, so there is no way to get any of it back."
+                         : "Permanently deletes your account and every task on the server. This cannot be undone.")
+                        .font(InkType.bodySmall)
+                        .foregroundStyle(Ink.inkSoft)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }

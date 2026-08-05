@@ -37,6 +37,7 @@ final class AppModel {
     private(set) var isPlanning = false
     var chatHistory: [ChatTurn] = []
     private(set) var isChatting = false
+    private(set) var isDeletingAccount = false
 
     // MARK: - Dependencies
 
@@ -47,6 +48,9 @@ final class AppModel {
     private let auth = SupabaseAuth()
     private let reminders = Reminders()
     private let pending = PendingWrites()
+    /// Computed rather than stored: it holds nothing but a reference to `auth`,
+    /// and @Observable can't synthesise storage for a lazy property.
+    private var accountService: AccountService { AccountService(auth: auth) }
     private let connectivity = NWPathMonitor()
 
     /// The store that owns the truth right now.
@@ -126,6 +130,41 @@ final class AppModel {
         // has to be cleared — otherwise their tasks reappear in local mode.
         try? await localStore.replaceAll([])
         await refresh()
+    }
+
+    /// Permanently deletes the account and every task on the server, then wipes
+    /// every local trace. Required by App Store guideline 5.1.1(v), but it also
+    /// has to be honest: for an anonymous account there is no recovery path at
+    /// all, because the credential in the Keychain *is* the account.
+    @discardableResult
+    func deleteAccount() async -> Bool {
+        guard session != nil else { return false }
+        isDeletingAccount = true
+        defer { isDeletingAccount = false }
+
+        do {
+            try await accountService.deleteAccount()
+        } catch {
+            show(error)
+            return false
+        }
+
+        // Server side is gone; now remove everything held on the device.
+        await pending.clearAll()
+        try? await localStore.replaceAll([])
+        await auth.signOut()
+
+        session = nil
+        remoteStore = nil
+        remoteAI = nil
+        plan = nil
+        chatHistory = []
+        tasks = []
+        selectedTask = nil
+        await syncReminders()
+
+        show(message: "Account deleted. Nothing is left on the server.")
+        return true
     }
 
     /// Anything captured before signing in should follow the user up to the server.
