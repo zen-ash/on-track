@@ -24,6 +24,7 @@ struct PaperBackground: View {
                 .allowsHitTesting(false)
             }
             .ignoresSafeArea()
+            .accessibilityHidden(true)
     }
 }
 
@@ -60,5 +61,6 @@ struct InkSplatter: View {
             }
         }
         .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }

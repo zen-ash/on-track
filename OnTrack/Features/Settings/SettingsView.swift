@@ -36,11 +36,11 @@ struct SettingsView: View {
     private var header: some View {
         HStack {
             Text("Setup")
-                .font(InkType.title(24))
+                .inkTitle(24)
                 .posterCase(tracking: -0.8)
                 .foregroundStyle(Ink.ink)
             Spacer()
-            InkIconButton(systemName: "xmark", seed: 1001) { dismiss() }
+            InkIconButton(systemName: "xmark", seed: 1001, accessibilityLabel: "Close") { dismiss() }
         }
     }
 
@@ -54,7 +54,7 @@ struct SettingsView: View {
             SectionRule(title: "One-gesture capture", seed: 1010)
 
             Text("Set these up once. All four open the same voice capture.")
-                .font(InkType.bodySmall)
+                .inkBodySmall()
                 .foregroundStyle(Ink.inkSoft)
 
             triggerCard(
@@ -92,14 +92,15 @@ struct SettingsView: View {
             InkCard(seed: 1015) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Why not the power button?")
-                        .font(InkType.heading(15))
+                        .inkHeading(15)
                         .foregroundStyle(Ink.ink)
                     Text("iOS reserves the side button and every power+volume combination for screenshots, Emergency SOS and force restart. No app can claim them. Back Tap is the closest equivalent, and it's faster than you'd think.")
-                        .font(InkType.bodySmall)
+                        .inkBodySmall()
                         .foregroundStyle(Ink.inkSoft)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            .accessibilityElement(children: .combine)
         }
     }
 
@@ -107,25 +108,29 @@ struct SettingsView: View {
         HStack(alignment: .top, spacing: 12) {
             VStack(spacing: 6) {
                 Text(number)
-                    .font(InkType.stamp(11))
+                    .inkStamp(11)
                     .foregroundStyle(Ink.inkSoft)
                 Image(systemName: systemImage)
                     .font(.system(size: 15, weight: .black))
                     .foregroundStyle(Ink.ink)
             }
             .frame(width: 30)
+            // The number and icon are visual sequencing/decoration; title and
+            // detail already say everything they'd add.
+            .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(InkType.heading(16))
+                    .inkHeading(16)
                     .foregroundStyle(Ink.ink)
                 Text(detail)
-                    .font(InkType.bodySmall)
+                    .inkBodySmall()
                     .foregroundStyle(Ink.inkSoft)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: - Account
@@ -138,10 +143,10 @@ struct SettingsView: View {
                 InkCard(seed: 1021) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Running on this phone only")
-                            .font(InkType.heading(16))
+                            .inkHeading(16)
                             .foregroundStyle(Ink.ink)
                         Text("Tasks are saved locally and capture uses on-device parsing. Add your Supabase URL and anon key in AppConfig.swift to turn on sync, planning and chat.")
-                            .font(InkType.bodySmall)
+                            .inkBodySmall()
                             .foregroundStyle(Ink.inkSoft)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -156,7 +161,7 @@ struct SettingsView: View {
                     .buttonStyle(InkOutlineButtonStyle(seed: 1022))
 
                     Text("Signing in syncs your list and unlocks planning and chat. Anything you've already captured comes with you.")
-                        .font(InkType.bodySmall)
+                        .inkBodySmall()
                         .foregroundStyle(Ink.inkSoft)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -184,17 +189,18 @@ struct SettingsView: View {
                             }
                             Text(model.isDeletingAccount ? "Deleting…" : "Delete account and all data")
                         }
-                        .font(InkType.stamp(11))
+                        .inkStamp(11)
                         .stampCase()
                         .foregroundStyle(Ink.alarm)
                     }
                     .buttonStyle(.plain)
                     .disabled(model.isDeletingAccount)
+                    .accessibilityLabel(model.isDeletingAccount ? "Deleting account" : "Delete account and all data")
 
                     Text(model.session?.isAnonymous == true
                          ? "Permanently deletes your account and every task. You're signed in as a guest, so there is no way to get any of it back."
                          : "Permanently deletes your account and every task on the server. This cannot be undone.")
-                        .font(InkType.bodySmall)
+                        .inkBodySmall()
                         .foregroundStyle(Ink.inkSoft)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -212,12 +218,12 @@ struct SettingsView: View {
                 get: { model.calendarAwarenessEnabled },
                 set: { newValue in Task { await model.setCalendarAwareness(enabled: newValue) } }
             )) {
-                Text("Plan around my calendar").font(InkType.body).foregroundStyle(Ink.ink)
+                Text("Plan around my calendar").inkBody().foregroundStyle(Ink.ink)
             }
             .tint(Ink.ink)
 
             Text("Read-only. On Track only reads what's already on your calendar so the daily plan can avoid stacking a task on top of a meeting — it never creates, edits, or deletes anything there. Only start and end times are used, never titles.")
-                .font(InkType.bodySmall)
+                .inkBodySmall()
                 .foregroundStyle(Ink.inkSoft)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -225,14 +231,15 @@ struct SettingsView: View {
                 InkCard(seed: 1051) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Access was declined")
-                            .font(InkType.heading(15))
+                            .inkHeading(15)
                             .foregroundStyle(Ink.alarm)
                         Text("Turn it on from Settings → On Track → Calendars to actually use this.")
-                            .font(InkType.bodySmall)
+                            .inkBodySmall()
                             .foregroundStyle(Ink.inkSoft)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
+                .accessibilityElement(children: .combine)
             }
         }
     }
@@ -263,29 +270,36 @@ struct SettingsView: View {
 
     private func statusRow(_ title: String, on: Bool, detail: String) -> some View {
         HStack(spacing: 10) {
+            // Redundant with `detail` (which already spells out on/off/etc.)
+            // for anything but sighted glancing.
             Image(systemName: on ? "checkmark" : "minus")
                 .font(.system(size: 11, weight: .black))
                 .foregroundStyle(on ? Ink.ink : Ink.inkFaint)
                 .frame(width: 16)
+                .accessibilityHidden(true)
             Text(title)
-                .font(InkType.body)
+                .inkBody()
                 .foregroundStyle(on ? Ink.ink : Ink.inkSoft)
             Spacer()
             Text(detail)
-                .font(InkType.stamp(10))
+                .inkStamp(10)
                 .stampCase()
                 .foregroundStyle(Ink.inkSoft)
         }
+        .accessibilityElement(children: .combine)
     }
 
     private var about: some View {
         VStack(alignment: .leading, spacing: 8) {
             RoughDivider(seed: 1040, opacity: 0.3)
             HStack(spacing: 10) {
+                // Static branding, not a mood report — nothing for VoiceOver
+                // to add beyond the tagline text right next to it.
                 MascotView(mood: .watching, animated: false)
                     .frame(width: 34, height: 34)
+                    .accessibilityHidden(true)
                 Text("On Track — say it, and it's on the list.")
-                    .font(InkType.stamp(10))
+                    .inkStamp(10)
                     .stampCase()
                     .foregroundStyle(Ink.inkSoft)
             }

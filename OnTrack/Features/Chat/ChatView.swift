@@ -34,18 +34,21 @@ struct ChatView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 0) {
                     Text("Talk to it")
-                        .font(InkType.title(24))
+                        .inkTitle(24)
                         .posterCase(tracking: -0.8)
                         .foregroundStyle(Ink.ink)
                     Text(model.isFullyCapable ? "It can change your list" : "Needs the backend")
-                        .font(InkType.stamp(10))
+                        .inkStamp(10)
                         .stampCase()
                         .foregroundStyle(Ink.inkSoft)
                 }
                 Spacer()
+                // Purely decorative here — the "thinking" indicator lower in
+                // the transcript already says so in words while it's active.
                 MascotView(mood: model.isChatting ? .thinking : .watching)
                     .frame(width: 42, height: 42)
-                InkIconButton(systemName: "xmark", seed: 801) { dismiss() }
+                    .accessibilityHidden(true)
+                InkIconButton(systemName: "xmark", seed: 801, accessibilityLabel: "Close") { dismiss() }
             }
             RoughDivider(seed: 802, opacity: 0.32)
         }
@@ -71,9 +74,10 @@ struct ChatView: View {
                         HStack(spacing: 10) {
                             MascotView(mood: .thinking).frame(width: 30, height: 30)
                             Text("thinking")
-                                .font(InkType.stamp(10)).stampCase()
+                                .inkStamp(10).stampCase()
                                 .foregroundStyle(Ink.inkSoft)
                         }
+                        .accessibilityElement(children: .combine)
                     }
                 }
                 .padding(.horizontal, 22)
@@ -90,7 +94,7 @@ struct ChatView: View {
     private var emptyPrompt: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Ask it anything about your list.")
-                .font(InkType.heading(18))
+                .inkHeading(18)
                 .foregroundStyle(Ink.ink)
 
             ForEach(suggestions, id: \.self) { suggestion in
@@ -100,13 +104,14 @@ struct ChatView: View {
                 } label: {
                     HStack {
                         Text(suggestion)
-                            .font(InkType.bodySmall)
+                            .inkBodySmall()
                             .foregroundStyle(Ink.ink)
                             .multilineTextAlignment(.leading)
                         Spacer()
                         Image(systemName: "arrow.up.right")
                             .font(.system(size: 11, weight: .black))
                             .foregroundStyle(Ink.inkSoft)
+                            .accessibilityHidden(true)
                     }
                     .padding(.horizontal, 13)
                     .padding(.vertical, 11)
@@ -126,7 +131,7 @@ struct ChatView: View {
             if turn.role == .user { Spacer(minLength: 40) }
 
             Text(turn.text)
-                .font(InkType.body)
+                .inkBody()
                 .foregroundStyle(turn.role == .user ? Ink.paper : Ink.ink)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 14)
@@ -142,6 +147,10 @@ struct ChatView: View {
 
             if turn.role == .assistant { Spacer(minLength: 40) }
         }
+        // Alignment and colour carry "who said this" visually — a screen
+        // reader gets neither, so it needs to be said explicitly.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(turn.role == .user ? "You" : "On Track") said: \(turn.text)")
     }
 
     private var composer: some View {
@@ -150,7 +159,7 @@ struct ChatView: View {
 
             HStack(spacing: 10) {
                 TextField("Say what you want changed", text: $draft, axis: .vertical)
-                    .font(InkType.body)
+                    .inkBody()
                     .foregroundStyle(Ink.ink)
                     .tint(Ink.ink)
                     .focused($isFocused)
@@ -172,6 +181,7 @@ struct ChatView: View {
                 .buttonStyle(.plain)
                 .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty || model.isChatting)
                 .opacity(draft.trimmingCharacters(in: .whitespaces).isEmpty ? 0.4 : 1)
+                .accessibilityLabel("Send")
             }
             .padding(.horizontal, 22)
             .padding(.top, 12)

@@ -68,26 +68,30 @@ struct CaptureWidgetView: View {
     @Environment(\.widgetFamily) private var family
 
     var body: some View {
-        switch family {
-        case .accessoryRectangular:
-            HStack(spacing: 8) {
-                Image(systemName: "waveform")
-                    .font(.system(size: 17, weight: .black))
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("ON TRACK")
-                        .font(.system(size: 11, weight: .black).width(.compressed))
-                    Text("Say it")
-                        .font(.system(size: 14, weight: .semibold))
+        Group {
+            switch family {
+            case .accessoryRectangular:
+                HStack(spacing: 8) {
+                    Image(systemName: "waveform")
+                        .font(.system(size: 17, weight: .black))
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("ON TRACK")
+                            .font(.system(size: 11, weight: .black).width(.compressed))
+                        Text("Say it")
+                            .font(.system(size: 14, weight: .semibold))
+                    }
+                    Spacer(minLength: 0)
                 }
-                Spacer(minLength: 0)
-            }
 
-        default:
-            ZStack {
-                AccessoryWidgetBackground()
-                Image(systemName: "waveform")
-                    .font(.system(size: 20, weight: .black))
+            default:
+                ZStack {
+                    AccessoryWidgetBackground()
+                    Image(systemName: "waveform")
+                        .font(.system(size: 20, weight: .black))
+                }
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Capture with On Track")
     }
 }

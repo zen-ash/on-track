@@ -44,7 +44,7 @@ struct TaskDetailView: View {
     private var header: some View {
         HStack {
             Text(draft.isDone ? "Done" : "Task")
-                .font(InkType.title(24))
+                .inkTitle(24)
                 .posterCase(tracking: -0.8)
                 .foregroundStyle(Ink.ink)
 
@@ -60,7 +60,7 @@ struct TaskDetailView: View {
             }
             .buttonStyle(InkOutlineButtonStyle(seed: 701))
 
-            InkIconButton(systemName: "xmark", seed: 702) {
+            InkIconButton(systemName: "xmark", seed: 702, accessibilityLabel: "Close") {
                 commit()
                 dismiss()
             }
@@ -71,7 +71,7 @@ struct TaskDetailView: View {
         VStack(alignment: .leading, spacing: 8) {
             SectionRule(title: "What", seed: 710)
             TextField("Title", text: $draft.title, axis: .vertical)
-                .font(InkType.title(22))
+                .inkTitle(22)
                 .foregroundStyle(Ink.ink)
                 .tint(Ink.ink)
                 .lineLimit(1...4)
@@ -83,7 +83,7 @@ struct TaskDetailView: View {
             SectionRule(title: "When", seed: 711)
 
             Toggle(isOn: $hasDueDate) {
-                Text("Has a due date").font(InkType.body).foregroundStyle(Ink.ink)
+                Text("Has a due date").inkBody().foregroundStyle(Ink.ink)
             }
             .tint(Ink.ink)
             .onChange(of: hasDueDate) { _, isOn in
@@ -102,10 +102,10 @@ struct TaskDetailView: View {
                 )
                 .datePickerStyle(.compact)
                 .tint(Ink.ink)
-                .font(InkType.body)
+                .inkBody()
 
                 Toggle(isOn: $draft.hasTime) {
-                    Text("At a specific time").font(InkType.bodySmall).foregroundStyle(Ink.inkSoft)
+                    Text("At a specific time").inkBodySmall().foregroundStyle(Ink.inkSoft)
                 }
                 .tint(Ink.ink)
 
@@ -113,7 +113,7 @@ struct TaskDetailView: View {
                     HStack(spacing: 8) {
                         StampLabel(text: "repeats \(Recurrence.describe(recurrence))", filled: true, seed: 712)
                         Button("Stop repeating") { draft.recurrence = nil }
-                            .font(InkType.stamp(10))
+                            .inkStamp(10)
                             .stampCase()
                             .foregroundStyle(Ink.alarm)
                     }
@@ -133,7 +133,7 @@ struct TaskDetailView: View {
                         draft.priority = level
                     } label: {
                         Text(label(for: level))
-                            .font(InkType.stamp(11))
+                            .inkStamp(11)
                             .stampCase()
                             .foregroundStyle(draft.priority == level ? Ink.paper : Ink.ink)
                             .frame(maxWidth: .infinity)
@@ -148,6 +148,8 @@ struct TaskDetailView: View {
                             }
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(accessibilityLabel(for: level))
+                    .accessibilityAddTraits(draft.priority == level ? .isSelected : [])
                 }
             }
         }
@@ -159,6 +161,15 @@ struct TaskDetailView: View {
         case 2: return "!!"
         case 3: return "!!!"
         default: return "none"
+        }
+    }
+
+    private func accessibilityLabel(for level: Int) -> String {
+        switch level {
+        case 1: return "Low priority"
+        case 2: return "Medium priority"
+        case 3: return "Urgent priority"
+        default: return "No priority"
         }
     }
 
@@ -174,9 +185,14 @@ struct TaskDetailView: View {
                         InkCheckbox(isDone: child.isDone, seed: child.seed, size: 21)
                     }
                     .buttonStyle(.plain)
+                    // No swipe-action alternative here — this button is the
+                    // only way to toggle a step, so it needs its own label
+                    // rather than the row absorbing it the way TaskRow does.
+                    .accessibilityLabel(child.title)
+                    .accessibilityValue(child.isDone ? "Done" : "Not done")
 
                     Text(child.title)
-                        .font(InkType.bodySmall)
+                        .inkBodySmall()
                         .strikethrough(child.isDone, color: Ink.ink.opacity(0.6))
                         .foregroundStyle(child.isDone ? Ink.inkSoft : Ink.ink)
 
@@ -190,17 +206,18 @@ struct TaskDetailView: View {
                             .foregroundStyle(Ink.inkFaint)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Remove step")
                 }
             }
 
             HStack(spacing: 10) {
                 TextField("Add a step", text: $newSubtask)
-                    .font(InkType.bodySmall)
+                    .inkBodySmall()
                     .tint(Ink.ink)
                     .onSubmit { addSubtask() }
 
                 Button("Add", action: addSubtask)
-                    .font(InkType.stamp(10))
+                    .inkStamp(10)
                     .stampCase()
                     .foregroundStyle(Ink.ink)
                     .disabled(newSubtask.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -235,7 +252,7 @@ struct TaskDetailView: View {
                 text: Binding(get: { draft.notes ?? "" }, set: { draft.notes = $0.isEmpty ? nil : $0 }),
                 axis: .vertical
             )
-            .font(InkType.bodySmall)
+            .inkBodySmall()
             .foregroundStyle(Ink.ink)
             .tint(Ink.ink)
             .lineLimit(2...8)
@@ -253,12 +270,13 @@ struct TaskDetailView: View {
                 Image(systemName: "trash").font(.system(size: 13, weight: .black))
                 Text("Delete")
             }
-            .font(InkType.stamp(11))
+            .inkStamp(11)
             .stampCase()
             .foregroundStyle(Ink.alarm)
         }
         .buttonStyle(.plain)
         .padding(.top, 8)
+        .accessibilityLabel("Delete task")
     }
 
     private func addSubtask() {

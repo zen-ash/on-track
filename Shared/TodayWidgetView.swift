@@ -58,12 +58,33 @@ struct TodayWidgetView: View {
     }
 
     var body: some View {
-        switch family {
-        case .systemMedium:
-            medium
-        default:
-            small
+        Group {
+            switch family {
+            case .systemMedium:
+                medium
+            default:
+                small
+            }
         }
+        // The whole tile is one tap target (opens the app) — there's no
+        // per-row interaction to preserve, so it collapses to one glanceable
+        // summary rather than a swipe-through-every-stamp tour.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityDescription)
+    }
+
+    private var accessibilityDescription: String {
+        var parts = ["On Track"]
+        parts.append(overdue.isEmpty ? "nothing late" : "\(overdue.count) late")
+        parts.append(dueToday.isEmpty ? "nothing due today" : "\(dueToday.count) due today")
+
+        if family == .systemMedium {
+            let upcoming = (overdue + dueToday).prefix(4)
+            if !upcoming.isEmpty {
+                parts.append("Next: " + upcoming.map(\.title).joined(separator: ", "))
+            }
+        }
+        return parts.joined(separator: ". ")
     }
 
     // MARK: Small
@@ -74,7 +95,7 @@ struct TodayWidgetView: View {
                 MascotView(mood: mood, animated: false)
                     .frame(width: 30, height: 30)
                 Text("ON TRACK")
-                    .font(InkType.stamp(9))
+                    .inkStamp(9)
                     .stampCase()
                     .foregroundStyle(Ink.ink)
                 Spacer(minLength: 0)
@@ -99,7 +120,7 @@ struct TodayWidgetView: View {
                 MascotView(mood: mood, animated: false)
                     .frame(width: 34, height: 34)
                 Text("ON TRACK")
-                    .font(InkType.stamp(9))
+                    .inkStamp(9)
                     .stampCase()
                     .foregroundStyle(Ink.ink)
 
@@ -120,7 +141,7 @@ struct TodayWidgetView: View {
             let upcoming = (overdue + dueToday).prefix(4)
             if upcoming.isEmpty {
                 Text(MascotVoice.line(for: .bored))
-                    .font(InkType.bodySmall)
+                    .inkBodySmall()
                     .foregroundStyle(Ink.inkSoft)
             } else {
                 ForEach(Array(upcoming.enumerated()), id: \.element.id) { _, task in
@@ -140,7 +161,7 @@ struct TodayWidgetView: View {
                 .padding(.top, 2)
 
             Text(task.title)
-                .font(InkType.bodySmall)
+                .inkBodySmall()
                 .foregroundStyle(Ink.ink)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -150,10 +171,10 @@ struct TodayWidgetView: View {
     private func countRow(_ count: Int, label: String, alarmed: Bool) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 5) {
             Text("\(count)")
-                .font(InkType.display(family == .systemSmall ? 26 : 22))
+                .inkDisplay(family == .systemSmall ? 26 : 22)
                 .foregroundStyle(alarmed ? Ink.alarm : Ink.ink)
             Text(label)
-                .font(InkType.stamp(9))
+                .inkStamp(9)
                 .stampCase()
                 .foregroundStyle(alarmed ? Ink.alarm : Ink.inkSoft)
         }

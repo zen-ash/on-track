@@ -42,7 +42,7 @@ struct StampLabel: View {
 
     var body: some View {
         Text(text)
-            .font(InkType.stamp(10))
+            .inkStamp(10)
             .stampCase()
             .foregroundStyle(filled ? Ink.paper : tint)
             .padding(.horizontal, 7)
@@ -68,7 +68,7 @@ struct InkBlockButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         let pressed = configuration.isPressed
         return configuration.label
-            .font(InkType.heading(17))
+            .inkHeading(17)
             .posterCase(tracking: 0.4)
             .foregroundStyle(Ink.paper)
             .padding(.horizontal, 22)
@@ -93,7 +93,7 @@ struct InkOutlineButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         let pressed = configuration.isPressed
         return configuration.label
-            .font(InkType.heading(16))
+            .inkHeading(16)
             .posterCase(tracking: 0.4)
             .foregroundStyle(Ink.ink)
             .padding(.horizontal, 18)
@@ -108,9 +108,14 @@ struct InkOutlineButtonStyle: ButtonStyle {
 }
 
 /// Small square icon button — used for the back chevron, close, and overflow.
+///
+/// `accessibilityLabel` is required rather than defaulted: the button is a
+/// bare SF Symbol with no text, so without an explicit label VoiceOver has
+/// nothing reliable to read — the symbol name itself, if anything.
 struct InkIconButton: View {
     let systemName: String
     var seed: UInt64 = 44
+    let accessibilityLabel: String
     var action: () -> Void
 
     var body: some View {
@@ -123,6 +128,7 @@ struct InkIconButton: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel)
     }
 }
 
@@ -159,7 +165,7 @@ struct SectionRule: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text(title)
-                .font(InkType.stamp(11))
+                .inkStamp(11)
                 .stampCase()
                 .foregroundStyle(Ink.ink)
 
@@ -167,11 +173,18 @@ struct SectionRule: View {
 
             if let trailing {
                 Text(trailing)
-                    .font(InkType.stamp(11))
+                    .inkStamp(11)
                     .stampCase()
                     .foregroundStyle(Ink.inkSoft)
             }
         }
+        // The divider has nothing to say, and title+trailing read better as
+        // one phrase ("Late, 3") than two separate stops. The header trait
+        // is what lets VoiceOver's rotor jump section to section instead of
+        // swiping through every row to get there.
+        .accessibilityElement(children: .ignore)
+        .accessibilityAddTraits(.isHeader)
+        .accessibilityLabel(trailing.map { "\(title), \($0)" } ?? title)
     }
 }
 

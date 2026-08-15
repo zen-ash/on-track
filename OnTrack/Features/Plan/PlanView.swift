@@ -35,16 +35,16 @@ struct PlanView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 0) {
                     Text("Today's plan")
-                        .font(InkType.title(24))
+                        .inkTitle(24)
                         .posterCase(tracking: -0.8)
                         .foregroundStyle(Ink.ink)
                     Text(model.isFullyCapable ? "Proposed, not imposed" : "On-device triage")
-                        .font(InkType.stamp(10))
+                        .inkStamp(10)
                         .stampCase()
                         .foregroundStyle(Ink.inkSoft)
                 }
                 Spacer()
-                InkIconButton(systemName: "xmark", seed: 901) {
+                InkIconButton(systemName: "xmark", seed: 901, accessibilityLabel: "Close") {
                     model.dismissPlan()
                     dismiss()
                 }
@@ -60,8 +60,9 @@ struct PlanView: View {
         VStack(spacing: 16) {
             Spacer()
             MascotView(mood: .thinking).frame(width: 110, height: 110)
+                .accessibilityHidden(true)
             Text("Reading your list")
-                .font(InkType.stamp(11)).stampCase()
+                .inkStamp(11).stampCase()
                 .foregroundStyle(Ink.inkSoft)
             Spacer()
         }
@@ -71,8 +72,9 @@ struct PlanView: View {
         VStack(spacing: 16) {
             Spacer()
             MascotView(mood: .watching).frame(width: 110, height: 110)
+                .accessibilityHidden(true)
             Text("Nothing to plan.")
-                .font(InkType.title(20)).posterCase()
+                .inkTitle(20).posterCase()
                 .foregroundStyle(Ink.ink)
             Button("Try again") { Task { await model.buildPlan() } }
                 .buttonStyle(InkOutlineButtonStyle(seed: 903))
@@ -104,7 +106,7 @@ struct PlanView: View {
                             ForEach(plan.deferIds, id: \.self) { id in
                                 if let task = model.tasks.first(where: { $0.id == id }) {
                                     Text(task.title)
-                                        .font(InkType.bodySmall)
+                                        .inkBodySmall()
                                         .foregroundStyle(Ink.inkSoft)
                                         .strikethrough(color: Ink.inkFaint)
                                 }
@@ -114,7 +116,7 @@ struct PlanView: View {
 
                     if let note = plan.note, !note.isEmpty {
                         Text(note)
-                            .font(InkType.bodySmall)
+                            .inkBodySmall()
                             .foregroundStyle(Ink.inkSoft)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -140,6 +142,7 @@ struct PlanView: View {
                     Image(systemName: "arrow.clockwise").font(.system(size: 15, weight: .black))
                 }
                 .buttonStyle(InkOutlineButtonStyle(seed: 941))
+                .accessibilityLabel("Rebuild the plan")
             }
             .padding(.horizontal, 22)
             .padding(.top, 12)
@@ -151,14 +154,16 @@ struct PlanView: View {
         InkCard(seed: 950, emphasised: true) {
             VStack(alignment: .leading, spacing: 7) {
                 Text("The one that matters")
-                    .font(InkType.stamp(10)).stampCase()
+                    .inkStamp(10).stampCase()
                     .foregroundStyle(Ink.inkSoft)
                 Text(plan.focus)
-                    .font(InkType.title(21))
+                    .inkTitle(21)
                     .foregroundStyle(Ink.ink)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("The one that matters: \(plan.focus)")
     }
 
     private func planRow(_ item: PlanItem) -> some View {
@@ -166,17 +171,17 @@ struct PlanView: View {
             if let task = model.tasks.first(where: { $0.id == item.taskId }) {
                 HStack(alignment: .top, spacing: 11) {
                     Text(String(format: "%02d", item.order + 1))
-                        .font(InkType.stamp(12))
+                        .inkStamp(12)
                         .foregroundStyle(Ink.inkSoft)
                         .padding(.top, 2)
 
                     VStack(alignment: .leading, spacing: 3) {
                         Text(task.title)
-                            .font(InkType.body)
+                            .inkBody()
                             .foregroundStyle(Ink.ink)
                             .fixedSize(horizontal: false, vertical: true)
                         Text(item.reason)
-                            .font(InkType.bodySmall)
+                            .inkBodySmall()
                             .foregroundStyle(Ink.inkSoft)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -184,6 +189,8 @@ struct PlanView: View {
                     Spacer(minLength: 0)
                 }
                 .padding(.vertical, 4)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(item.order + 1). \(task.title). \(item.reason)")
             }
         }
     }

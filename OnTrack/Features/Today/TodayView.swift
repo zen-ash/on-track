@@ -127,6 +127,29 @@ struct TodayView: View {
                 }
                 .tint(Ink.ink)
             }
+            // Swipe actions alone can be unreliable to reach with VoiceOver's
+            // gestures, so the same set is repeated explicitly here — double-
+            // tap opens detail (matching the sighted tap), the rest show up
+            // in the actions rotor.
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { model.selectedTask = task }
+            .accessibilityActions {
+                Button(task.isDone ? "Reopen" : "Mark done") {
+                    Task { await model.toggleDone(task) }
+                }
+                if offersRecurringActions {
+                    Button("Skip") {
+                        Task { await model.skipRecurrence(task) }
+                    }
+                    Button("End series", role: .destructive) {
+                        pendingEndSeries = task
+                    }
+                } else {
+                    Button("Delete", role: .destructive) {
+                        Task { await model.delete(task) }
+                    }
+                }
+            }
     }
 }
 
@@ -149,12 +172,12 @@ private struct EmptyState: View {
 
             VStack(spacing: 6) {
                 Text(model.moodLine)
-                    .font(InkType.title(24))
+                    .inkTitle(24)
                     .posterCase(tracking: -0.6)
                     .foregroundStyle(Ink.ink)
 
                 Text("Hold the button and just say it.\nDates, repeats and priority get sorted out for you.")
-                    .font(InkType.bodySmall)
+                    .inkBodySmall()
                     .foregroundStyle(Ink.inkSoft)
                     .multilineTextAlignment(.center)
                     .lineSpacing(2)

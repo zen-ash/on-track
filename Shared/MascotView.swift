@@ -331,7 +331,7 @@ struct MascotBanner: View {
                 .frame(width: size, height: size)
 
             Text(line)
-                .font(InkType.heading(17))
+                .inkHeading(17)
                 .foregroundStyle(Ink.ink)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -341,6 +341,9 @@ struct MascotBanner: View {
             insertion: .push(from: .leading).combined(with: .opacity),
             removal: .opacity
         ))
+        // One stop, not two — the mascot's own mood label and the line next
+        // to it are two views of the same information.
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -353,9 +356,9 @@ struct MascotBanner: View {
                     HStack(spacing: 16) {
                         MascotView(mood: mood).frame(width: 76, height: 76)
                         VStack(alignment: .leading) {
-                            Text(mood.rawValue).font(InkType.title(20)).posterCase()
+                            Text(mood.rawValue).inkTitle(20).posterCase()
                             Text(MascotVoice.line(for: mood, overdue: 3, done: 2, remaining: 4))
-                                .font(InkType.bodySmall)
+                                .inkBodySmall()
                                 .foregroundStyle(Ink.inkSoft)
                         }
                         Spacer()

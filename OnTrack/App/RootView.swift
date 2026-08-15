@@ -54,6 +54,18 @@ struct RootView: View {
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: model.banner)
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: model.pendingUndo)
+        // A view merely appearing on screen isn't proactively spoken by
+        // VoiceOver unless focus already happens to be there — for a
+        // transient message like these, that's exactly the case where it'd
+        // otherwise go unheard entirely.
+        .onChange(of: model.banner) { _, newValue in
+            guard let newValue else { return }
+            AccessibilityNotification.Announcement(newValue.text).post()
+        }
+        .onChange(of: model.pendingUndo) { _, newValue in
+            guard let newValue else { return }
+            AccessibilityNotification.Announcement(newValue.message).post()
+        }
         .sheet(isPresented: $model.isCaptureOpen) {
             CaptureSheet(startListening: model.captureStartsListening)
                 .presentationDetents([.height(420), .large])
@@ -111,11 +123,11 @@ private struct Masthead: View {
             HStack(alignment: .center, spacing: 10) {
                 VStack(alignment: .leading, spacing: -2) {
                     Text("On Track")
-                        .font(InkType.display(38))
+                        .inkDisplay(38)
                         .posterCase(tracking: -1.6)
                         .foregroundStyle(Ink.ink)
                     Text(dateStamp)
-                        .font(InkType.stamp(10))
+                        .inkStamp(10)
                         .stampCase()
                         .foregroundStyle(Ink.inkSoft)
                 }
@@ -123,15 +135,15 @@ private struct Masthead: View {
                 Spacer()
 
                 HStack(spacing: 8) {
-                    InkIconButton(systemName: "bolt.fill", seed: 101) {
+                    InkIconButton(systemName: "bolt.fill", seed: 101, accessibilityLabel: "Plan my day") {
                         InkHaptics.tick()
                         model.route = .plan
                     }
-                    InkIconButton(systemName: "bubble.left.fill", seed: 102) {
+                    InkIconButton(systemName: "bubble.left.fill", seed: 102, accessibilityLabel: "Chat") {
                         InkHaptics.tick()
                         model.route = .chat
                     }
-                    InkIconButton(systemName: "line.3.horizontal", seed: 103) {
+                    InkIconButton(systemName: "line.3.horizontal", seed: 103, accessibilityLabel: "Menu") {
                         InkHaptics.tick()
                         model.route = .settings
                     }
@@ -184,6 +196,7 @@ private struct CaptureBar: View {
                         .frame(width: 22, height: 22)
                 }
                 .buttonStyle(InkOutlineButtonStyle(seed: 211))
+                .accessibilityLabel("Type a task")
             }
             .padding(.horizontal, 20)
             .padding(.top, 14)
@@ -210,12 +223,12 @@ private struct WidgetPreviewSheet: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
-                Text("Small").font(InkType.stamp(11)).stampCase()
+                Text("Small").inkStamp(11).stampCase()
                 tile(width: 155, height: 155) {
                     TodayWidgetView(entry: entry, forcedFamily: .systemSmall)
                 }
 
-                Text("Medium").font(InkType.stamp(11)).stampCase()
+                Text("Medium").inkStamp(11).stampCase()
                 tile(width: 329, height: 155) {
                     TodayWidgetView(entry: entry, forcedFamily: .systemMedium)
                 }
@@ -234,6 +247,9 @@ private struct WidgetPreviewSheet: View {
             .background(PaperBackground())
             .clipShape(RoundedRectangle(cornerRadius: 24))
             .shadow(radius: 6)
+            // Matches the real widget's own cap, so this preview shows what
+            // it would actually look like rather than the app's wider range.
+            .dynamicTypeSize(...DynamicTypeSize.inkWidgetMaxDynamicTypeSize)
     }
 }
 #endif
@@ -254,7 +270,7 @@ private struct UndoToastView: View {
 
             HStack(spacing: 14) {
                 Text(pending.message)
-                    .font(InkType.bodySmall)
+                    .inkBodySmall()
                     .foregroundStyle(Ink.paper)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -263,7 +279,7 @@ private struct UndoToastView: View {
 
                 Button(action: onUndo) {
                     Text("Undo")
-                        .font(InkType.stamp(11))
+                        .inkStamp(11)
                         .stampCase()
                         .foregroundStyle(Ink.paper)
                 }
@@ -291,8 +307,9 @@ private struct BannerView: View {
             HStack(spacing: 10) {
                 Image(systemName: message.isError ? "exclamationmark.triangle.fill" : "checkmark.seal.fill")
                     .font(.system(size: 14, weight: .black))
+                    .accessibilityHidden(true)
                 Text(message.text)
-                    .font(InkType.bodySmall)
+                    .inkBodySmall()
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
             }

@@ -9,6 +9,7 @@ struct OnTrackApp: App {
         WindowGroup {
             RootView()
                 .environment(model)
+                .dynamicTypeSize(...DynamicTypeSize.inkMaxDynamicTypeSize)
                 .task {
                     await model.bootstrap()
                     consumePendingCapture()

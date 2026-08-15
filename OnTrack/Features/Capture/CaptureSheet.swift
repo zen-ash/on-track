@@ -61,21 +61,24 @@ struct CaptureSheet: View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(headline)
-                    .font(InkType.title(24))
+                    .inkTitle(24)
                     .posterCase(tracking: -0.8)
                     .foregroundStyle(Ink.ink)
                 Text(subhead)
-                    .font(InkType.stamp(10))
+                    .inkStamp(10)
                     .stampCase()
                     .foregroundStyle(Ink.inkSoft)
             }
 
             Spacer()
 
+            // Headline/subhead already say "Listening" / "Reading it" / etc.
+            // in words — the mascot here is reinforcement, not information.
             MascotView(mood: mascotMood)
                 .frame(width: 46, height: 46)
+                .accessibilityHidden(true)
 
-            InkIconButton(systemName: "xmark", seed: 501) {
+            InkIconButton(systemName: "xmark", seed: 501, accessibilityLabel: "Close") {
                 Task {
                     await transcriber.stop()
                     dismiss()
@@ -91,7 +94,7 @@ struct CaptureSheet: View {
 
             if phase == .typing {
                 TextField("What needs doing?", text: $typed, axis: .vertical)
-                    .font(InkType.body)
+                    .inkBody()
                     .foregroundStyle(Ink.ink)
                     .tint(Ink.ink)
                     .focused($isTypingFocused)
@@ -105,11 +108,14 @@ struct CaptureSheet: View {
             if phase == .listening {
                 Waveform(level: transcriber.level)
                     .frame(height: 44)
+                    // A live audio-level animation has nothing to read; the
+                    // state it represents ("Listening") is already said above.
+                    .accessibilityHidden(true)
             }
 
             if case .failed(let message) = transcriber.state {
                 Text(message)
-                    .font(InkType.bodySmall)
+                    .inkBodySmall()
                     .foregroundStyle(Ink.alarm)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -126,7 +132,7 @@ struct CaptureSheet: View {
                     Text(transcriptText)
                 }
             }
-            .font(InkType.body)
+            .inkBody()
             .frame(maxWidth: .infinity, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
         }
@@ -152,7 +158,7 @@ struct CaptureSheet: View {
 
             if let reply, !reply.isEmpty {
                 Text(reply)
-                    .font(InkType.heading(17))
+                    .inkHeading(17)
                     .foregroundStyle(Ink.ink)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -161,7 +167,7 @@ struct CaptureSheet: View {
                 InkCard(seed: task.title.inkSeed) {
                     VStack(alignment: .leading, spacing: 7) {
                         Text(task.title)
-                            .font(InkType.body)
+                            .inkBody()
                             .foregroundStyle(Ink.ink)
                             .fixedSize(horizontal: false, vertical: true)
 
@@ -184,13 +190,16 @@ struct CaptureSheet: View {
                             VStack(alignment: .leading, spacing: 3) {
                                 ForEach(task.subtasks, id: \.self) { step in
                                     Text("— \(step)")
-                                        .font(InkType.bodySmall)
+                                        .inkBodySmall()
                                         .foregroundStyle(Ink.inkSoft)
                                 }
                             }
                         }
                     }
                 }
+                // One stop per created task instead of one per stamp.
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(accessibilityDescription(for: task))
             }
         }
     }
@@ -226,12 +235,13 @@ struct CaptureSheet: View {
                     Image(systemName: "waveform").font(.system(size: 16, weight: .black))
                 }
                 .buttonStyle(InkOutlineButtonStyle(seed: 522))
+                .accessibilityLabel("Switch to voice")
 
             case .working:
                 HStack(spacing: 10) {
                     ProgressView().tint(Ink.ink)
                     Text("Sorting that out…")
-                        .font(InkType.stamp(11)).stampCase()
+                        .inkStamp(11).stampCase()
                         .foregroundStyle(Ink.inkSoft)
                 }
                 .frame(maxWidth: .infinity)
@@ -250,6 +260,7 @@ struct CaptureSheet: View {
                     Image(systemName: "plus").font(.system(size: 16, weight: .black))
                 }
                 .buttonStyle(InkOutlineButtonStyle(seed: 524))
+                .accessibilityLabel("Capture another")
 
             case .idle:
                 Button {
@@ -338,6 +349,29 @@ struct CaptureSheet: View {
         case .done: return .pleased
         default: return .watching
         }
+    }
+
+    private func accessibilityDescription(for task: CapturedTask) -> String {
+        var parts = [task.title]
+        if let due = task.dueAt {
+            parts.append("Due \(Self.stamp(for: due, hasTime: task.hasTime))")
+        }
+        switch task.priority {
+        case 3: parts.append("Urgent")
+        case 2: parts.append("Medium priority")
+        case 1: parts.append("Low priority")
+        default: break
+        }
+        if let recurrence = task.recurrence {
+            parts.append("Repeats \(Recurrence.describe(recurrence))")
+        }
+        if !task.tags.isEmpty {
+            parts.append(task.tags.prefix(2).map { "Tagged \($0)" }.joined(separator: ", "))
+        }
+        if !task.subtasks.isEmpty {
+            parts.append("\(task.subtasks.count) steps: \(task.subtasks.joined(separator: ", "))")
+        }
+        return parts.joined(separator: ". ")
     }
 
     private static func stamp(for date: Date, hasTime: Bool) -> String {

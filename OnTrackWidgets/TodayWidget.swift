@@ -15,6 +15,7 @@ struct TodayWidget: Widget {
             TodayWidgetView(entry: entry)
                 .widgetURL(URL(string: "ontrack://today"))
                 .containerBackground(for: .widget) { PaperBackground() }
+                .dynamicTypeSize(...DynamicTypeSize.inkWidgetMaxDynamicTypeSize)
         }
         .configurationDisplayName("Today")
         .description("Late and due-today counts, at a glance.")
