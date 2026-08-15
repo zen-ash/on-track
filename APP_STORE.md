@@ -26,6 +26,16 @@ Add *Contact Info → Email Address* and *Contact Info → Name* **only if** you
 Sign in with Apple and store what Apple returns. Both are Linked, not Tracking,
 App Functionality. If you launch guest-only, leave them off.
 
+> **Calendar isn't a separate line — it stays under *Other User Content*.**
+> Apple's nutrition label has no dedicated "Calendar" category. If a user turns
+> on Setup → Calendar → "Plan around my calendar" (off by default), the app
+> reads events' start/end times — never titles, notes, locations, or
+> attendees, and never all-day events — and includes them in the same daily
+> plan request that already sends task text, so it doesn't add a new checkbox.
+> It does add an `NSCalendarsFullAccessUsageDescription` entry, which review
+> will notice: be ready to point at this being opt-in, off by default, and
+> read-only in review notes (see section 4).
+
 ### What to answer "No" to
 
 Location, Contacts, Health, Financial, Browsing History, Search History,
@@ -88,6 +98,13 @@ Speech is transcribed entirely on device using SpeechAnalyzer.
 No audio is uploaded or stored. Only the resulting text is sent
 to our server, which calls OpenAI to structure it. Microphone
 access is requested only when you tap "Speak it".
+
+CALENDAR
+Off by default. Setup -> Calendar -> "Plan around my calendar"
+is the only thing that requests access, and the app never
+creates, edits, or deletes an event. When it's on, only the
+start/end time of today's events is sent when building a plan --
+never a title, note, location, or attendee.
 
 ACCOUNT DELETION
 Menu (☰) → Account → "Delete account and all data". This

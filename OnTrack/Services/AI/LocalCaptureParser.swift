@@ -19,9 +19,12 @@ struct LocalCaptureParser: AIService, Sendable {
         return CaptureResult(tasks: tasks, reply: nil)
     }
 
-    func plan(tasks: [TaskItem]) async throws -> DayPlan {
+    func plan(tasks: [TaskItem], calendarBusy: [BusyBlock]) async throws -> DayPlan {
         // Heuristic stand-in: late work first, then today's, then whatever is
-        // highest priority. No reasoning, just triage rules.
+        // highest priority. No reasoning, just triage rules — so calendar
+        // blocks aren't actually weighed against slots here the way the real
+        // model weighs them. Worth saying so, rather than quietly ignoring
+        // access the user explicitly granted.
         let open = tasks.filter { $0.status == .open && $0.parentId == nil }
         let ordered = open.inWorkingOrder()
         let chosen = Array(ordered.prefix(6))
@@ -35,11 +38,15 @@ struct LocalCaptureParser: AIService, Sendable {
             )
         }
 
+        let note = calendarBusy.isEmpty
+            ? "Planned on-device. Connect the backend for real triage."
+            : "Planned on-device — connect the backend to actually weigh today's \(calendarBusy.count) calendar block\(calendarBusy.count == 1 ? "" : "s") against it."
+
         return DayPlan(
             focus: chosen.first?.title ?? "Nothing pressing.",
             items: items,
             deferIds: [],
-            note: "Planned on-device. Connect the backend for real triage."
+            note: note
         )
     }
 

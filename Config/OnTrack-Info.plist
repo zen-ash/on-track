@@ -35,6 +35,8 @@
 	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>On Track reads your calendar to plan your day around meetings you already have. It never creates, edits, or deletes anything on your calendar.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>On Track listens so you can speak a task instead of typing it.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>

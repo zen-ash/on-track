@@ -20,6 +20,9 @@ struct RemoteAIService: AIService {
         let tasks: [TaskItem]
         let now: String
         let timezone: String
+        /// Empty unless calendar awareness is on and access was actually
+        /// granted — see `AppModel.buildPlan()`.
+        let calendarBusy: [BusyBlock]
     }
 
     private struct ChatRequest: Encodable {
@@ -54,14 +57,15 @@ struct RemoteAIService: AIService {
         )
     }
 
-    func plan(tasks: [TaskItem]) async throws -> DayPlan {
+    func plan(tasks: [TaskItem], calendarBusy: [BusyBlock]) async throws -> DayPlan {
         let relevant = tasks.filter { $0.status == .open }
         return try await call(
             action: "plan",
             body: PlanRequest(
                 tasks: Array(relevant.prefix(120)),
                 now: DateParsing.iso8601String(Date()),
-                timezone: TimeZone.current.identifier
+                timezone: TimeZone.current.identifier,
+                calendarBusy: Array(calendarBusy.prefix(40))
             )
         )
     }

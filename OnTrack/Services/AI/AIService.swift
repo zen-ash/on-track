@@ -115,6 +115,15 @@ struct DayPlan: Codable, Sendable {
     var note: String?
 }
 
+/// One stretch of the day that's already spoken for. Deliberately just a time
+/// range — never a title, location, or attendee — so calendar awareness can
+/// only ever change *when* the plan puts something, never let the model see
+/// or reason about what the event actually is.
+struct BusyBlock: Codable, Sendable, Equatable {
+    var start: Date
+    var end: Date
+}
+
 struct ChatReply: Codable, Sendable {
     var message: String
     /// True when the model changed the database, so the client knows to refetch.
@@ -136,8 +145,9 @@ struct ChatTurn: Codable, Sendable, Identifiable, Hashable {
 protocol AIService: Sendable {
     /// Turns raw speech or typing into structured tasks.
     func capture(text: String, existingTitles: [String]) async throws -> CaptureResult
-    /// Proposes today's plan across the open list.
-    func plan(tasks: [TaskItem]) async throws -> DayPlan
+    /// Proposes today's plan across the open list. `calendarBusy` is empty
+    /// unless the user turned calendar awareness on and access was granted.
+    func plan(tasks: [TaskItem], calendarBusy: [BusyBlock]) async throws -> DayPlan
     /// Conversational edit surface. The server runs the tool loop against the DB.
     func chat(history: [ChatTurn], tasks: [TaskItem]) async throws -> ChatReply
     /// Expands one vague task into concrete next actions.

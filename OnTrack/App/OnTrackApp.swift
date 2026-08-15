@@ -39,6 +39,10 @@ struct OnTrackApp: App {
                     guard phase == .active else { return }
                     consumePendingCapture()
                     Task { await model.refresh() }
+                    // Calendar access can change from iOS Settings while
+                    // backgrounded, so it's re-read on every foreground
+                    // rather than trusted from whenever it was last checked.
+                    Task { await model.refreshCalendarAccessState() }
                 }
         }
     }

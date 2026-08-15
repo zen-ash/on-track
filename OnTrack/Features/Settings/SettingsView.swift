@@ -15,6 +15,7 @@ struct SettingsView: View {
                     header
                     quickCaptureGuide
                     accountSection
+                    calendarSection
                     statusSection
                     about
                 }
@@ -201,6 +202,41 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Calendar
+
+    private var calendarSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionRule(title: "Calendar", seed: 1050)
+
+            Toggle(isOn: Binding(
+                get: { model.calendarAwarenessEnabled },
+                set: { newValue in Task { await model.setCalendarAwareness(enabled: newValue) } }
+            )) {
+                Text("Plan around my calendar").font(InkType.body).foregroundStyle(Ink.ink)
+            }
+            .tint(Ink.ink)
+
+            Text("Read-only. On Track only reads what's already on your calendar so the daily plan can avoid stacking a task on top of a meeting — it never creates, edits, or deletes anything there. Only start and end times are used, never titles.")
+                .font(InkType.bodySmall)
+                .foregroundStyle(Ink.inkSoft)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if model.calendarAwarenessEnabled && model.calendarAccessState == .denied {
+                InkCard(seed: 1051) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Access was declined")
+                            .font(InkType.heading(15))
+                            .foregroundStyle(Ink.alarm)
+                        Text("Turn it on from Settings → On Track → Calendars to actually use this.")
+                            .font(InkType.bodySmall)
+                            .foregroundStyle(Ink.inkSoft)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: - Status
 
     private var statusSection: some View {
@@ -212,6 +248,16 @@ struct SettingsView: View {
             statusRow("Smart parsing", on: model.isFullyCapable, detail: model.isFullyCapable ? "model" : "on-device rules")
             statusRow("Daily planning", on: model.isFullyCapable, detail: model.isFullyCapable ? "model" : "heuristic")
             statusRow("Chat", on: model.isFullyCapable, detail: model.isFullyCapable ? "ready" : "needs backend")
+            statusRow("Calendar", on: model.calendarAwarenessEnabled && model.calendarAccessState == .authorized, detail: calendarStatusDetail)
+        }
+    }
+
+    private var calendarStatusDetail: String {
+        guard model.calendarAwarenessEnabled else { return "off" }
+        switch model.calendarAccessState {
+        case .authorized: return "reading"
+        case .denied: return "blocked"
+        case .notDetermined: return "pending"
         }
     }
 

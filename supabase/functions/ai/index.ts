@@ -55,7 +55,7 @@ Deno.serve(async (req) => {
         // The Swift client encodes keys as snake_case.
         return ok(await capture(body.text ?? "", body.existing_titles ?? [], now, timezone));
       case "plan":
-        return ok(await plan(body.tasks ?? [], now, timezone));
+        return ok(await plan(body.tasks ?? [], body.calendar_busy ?? [], now, timezone));
       case "chat":
         return ok(await chat(supabase, body.history ?? [], now, timezone));
       case "breakdown":
@@ -391,11 +391,20 @@ const PLAN_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-async function plan(tasks: TaskRow[], now: string, timezone: string) {
+type BusyBlock = { start: string; end: string };
+
+async function plan(tasks: TaskRow[], calendarBusy: BusyBlock[], now: string, timezone: string) {
   const open = tasks.filter((t) => t.status === "open");
   if (open.length === 0) {
     return { focus: "Nothing to do.", items: [], defer_ids: [], note: null };
   }
+
+  // Times only, never titles — the client never sends anything else, but the
+  // cap and the shape are enforced here too rather than trusted blindly.
+  const busy = calendarBusy
+    .filter((b) => b && typeof b.start === "string" && typeof b.end === "string")
+    .slice(0, 40)
+    .map((b) => ({ start: b.start, end: b.end }));
 
   const system = `
 ${VOICE}
@@ -411,6 +420,17 @@ Rules:
 - Group deep work together and put it where the day has room.
 - If the list is overloaded, put the excess in defer_ids rather than pretending.
 - Use task ids exactly as given. Never invent one.
+${
+    busy.length > 0
+      ? `- "calendar_busy" below lists the user's existing commitments today as
+  start/end times only — that's genuinely all you're given, not a
+  simplification, so don't guess or invent what any of them are. Don't place
+  a slot's real-world time across one of these ranges; the slot immediately
+  before or after is normally the better call. A "now" item already in
+  progress against a busy block just means the day is tight — say so in note
+  rather than pretending it isn't.`
+      : `- The user hasn't shared their calendar, so plan on the task list alone.`
+  }
 `.trim();
 
   const digest = open.map((t) => ({
@@ -431,7 +451,7 @@ Rules:
     note: string | null;
   }>("plan", PLAN_SCHEMA, [
     { role: "system", content: system },
-    { role: "user", content: JSON.stringify(digest) },
+    { role: "user", content: JSON.stringify({ tasks: digest, calendar_busy: busy }) },
   ]);
 
   // A hallucinated id would fail to decode on the client, so drop anything

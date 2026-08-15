@@ -42,6 +42,19 @@ final class AppModel {
     var isPreviewingWidget = false
     #endif
 
+    /// Off until the user turns it on in Setup. Calendar access is more
+    /// sensitive than anything else this app touches, so unlike notifications
+    /// it never gets requested on the app's own initiative — only this toggle
+    /// triggers the system prompt.
+    var calendarAwarenessEnabled: Bool {
+        didSet { UserDefaults.standard.set(calendarAwarenessEnabled, forKey: Self.calendarAwarenessKey) }
+    }
+    /// EventKit's own answer, independent of the toggle above — the user can
+    /// turn the toggle on and still decline the system prompt, or revoke
+    /// access later from iOS Settings while the app is backgrounded.
+    private(set) var calendarAccessState: CalendarService.AccessState = .notDetermined
+    private static let calendarAwarenessKey = "calendarAwarenessEnabled"
+
     /// AI surfaces
     private(set) var plan: DayPlan?
     private(set) var isPlanning = false
@@ -57,6 +70,7 @@ final class AppModel {
     private var remoteAI: RemoteAIService?
     private let auth = SupabaseAuth()
     private let reminders = Reminders()
+    private let calendarService = CalendarService()
     private let pending = PendingWrites()
     /// Computed rather than stored: it holds nothing but a reference to `auth`,
     /// and @Observable can't synthesise storage for a lazy property.
@@ -84,11 +98,16 @@ final class AppModel {
 
     // MARK: - Lifecycle
 
+    init() {
+        calendarAwarenessEnabled = UserDefaults.standard.bool(forKey: Self.calendarAwarenessKey)
+    }
+
     func bootstrap() async {
         if AppConfig.isBackendConfigured, let restored = await auth.restoreSession() {
             adopt(session: restored)
         }
         await refresh()
+        await refreshCalendarAccessState()
         startWatchingConnectivity()
 
         #if DEBUG
@@ -619,10 +638,33 @@ final class AppModel {
         isPlanning = true
         defer { isPlanning = false }
         do {
-            plan = try await ai.plan(tasks: tasks)
+            let busy = (calendarAwarenessEnabled && calendarAccessState == .authorized)
+                ? await calendarService.busyBlocks(on: Date())
+                : []
+            plan = try await ai.plan(tasks: tasks, calendarBusy: busy)
         } catch {
             show(error)
         }
+    }
+
+    // MARK: - Calendar
+
+    /// Called by the Settings toggle. Turning it off never touches EventKit —
+    /// there's no permission to ask to stop doing something. Turning it on
+    /// requests access only if that hasn't already been decided; if it has
+    /// (either way), this just re-reads the answer.
+    func setCalendarAwareness(enabled: Bool) async {
+        calendarAwarenessEnabled = enabled
+        guard enabled else { return }
+        await calendarService.requestAccess()
+        await refreshCalendarAccessState()
+    }
+
+    /// The system permission can change underneath the app — revoked from iOS
+    /// Settings while backgrounded, or decided for the first time just now —
+    /// so this re-reads it rather than trusting whatever was true at launch.
+    func refreshCalendarAccessState() async {
+        calendarAccessState = await calendarService.accessState
     }
 
     func applyPlan() async {

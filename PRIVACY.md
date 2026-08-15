@@ -27,6 +27,17 @@ Hide My Email is fully supported. If you continue as a guest, the identifier is
 anonymous and is not connected to your name, email, device, or anything else
 about you.
 
+**Calendar busy times, only if you turn this on.** Setup → Calendar → "Plan
+around my calendar" is off by default. Turning it on reads events already on
+your calendar — every calendar you've added to Calendar.app, not just one —
+so the daily plan can avoid stacking a task on top of a meeting. Only the
+start and end time of each event is used; titles, notes, locations, and
+attendees are never read out of the event, and all-day events (which are
+almost always holidays or birthdays, not real commitments) are ignored
+entirely. On Track never creates, edits, or deletes anything on your
+calendar — the permission itself allows it, but nothing in the app ever
+calls that.
+
 **Nothing else.** There is no analytics SDK, no advertising, no crash reporting,
 no tracking, and no third-party code of any kind in the app. Your location,
 contacts, photos, and device identifiers are never accessed.
@@ -48,7 +59,9 @@ its own rows. Supabase acts as our data processor.
 **OpenAI** receives task text when a feature needs it: turning what you said into
 structured tasks, building a daily plan, answering a question about your list, or
 breaking a task into steps. Requests are sent from our server, never from your
-phone, and your account identifier is not included.
+phone, and your account identifier is not included. If calendar awareness is
+on, building a plan also sends the start and end times of today's events —
+never anything else about them, as above.
 
 OpenAI processes this under its API data policy: submissions through the API are
 **not used to train its models**, and are retained for a limited period for abuse
