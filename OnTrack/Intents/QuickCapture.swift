@@ -91,6 +91,16 @@ struct OnTrackShortcuts: AppShortcutsProvider {
             shortTitle: "Add task",
             systemImageName: "plus.square"
         )
+        AppShortcut(
+            intent: WhatsOverdueIntent(),
+            phrases: [
+                "What's overdue in \(.applicationName)",
+                "What's late in \(.applicationName)",
+                "Ask \(.applicationName) what's overdue"
+            ],
+            shortTitle: "What's overdue",
+            systemImageName: "exclamationmark.triangle"
+        )
     }
 }
 

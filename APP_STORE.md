@@ -92,6 +92,9 @@ WHAT TO TRY
    weekly repeat rule.
 4. The bolt icon builds a plan for the day; the speech bubble
    answers questions about the list and can edit it.
+5. Ask Siri "what's overdue in On Track" -- reads back what's
+   late without opening the app. Read-only, and works offline
+   in local mode too.
 
 VOICE AND PRIVACY
 Speech is transcribed entirely on device using SpeechAnalyzer.
