@@ -3,8 +3,14 @@ import Foundation
 /// Everything the UI needs from persistence, so the local and Supabase paths are
 /// interchangeable and the views never know which one is live.
 protocol TaskStore: Sendable {
+    /// Live tasks only — anything soft-deleted (`deletedAt != nil`) is excluded.
     func loadAll() async throws -> [TaskItem]
+    /// The mirror image of `loadAll()`: only soft-deleted tasks, for Trash.
+    func loadTrash() async throws -> [TaskItem]
     func upsert(_ tasks: [TaskItem]) async throws
+    /// A real, permanent delete — used for the 30-day sweep and "Delete
+    /// Forever", never for an ordinary delete (that's an upsert with
+    /// `deletedAt` set, so it lands in Trash instead of vanishing outright).
     func delete(ids: [UUID]) async throws
 }
 

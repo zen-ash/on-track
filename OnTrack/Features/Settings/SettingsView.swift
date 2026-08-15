@@ -5,6 +5,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var isConfirmingDelete = false
+    @State private var isShowingTrash = false
 
     var body: some View {
         ZStack {
@@ -16,6 +17,7 @@ struct SettingsView: View {
                     quickCaptureGuide
                     accountSection
                     calendarSection
+                    dataSection
                     statusSection
                     about
                 }
@@ -30,6 +32,9 @@ struct SettingsView: View {
             }
         } message: {
             Text("Your account and every task will be permanently deleted from the server. This can't be undone.")
+        }
+        .sheet(isPresented: $isShowingTrash) {
+            TrashView().presentationBackground(Ink.paper)
         }
     }
 
@@ -241,6 +246,41 @@ struct SettingsView: View {
                 }
                 .accessibilityElement(children: .combine)
             }
+        }
+    }
+
+    // MARK: - Data
+
+    private var dataSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionRule(title: "Data", seed: 1035)
+
+            Button {
+                isShowingTrash = true
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 13, weight: .black))
+                        .foregroundStyle(Ink.ink)
+                        .frame(width: 16)
+                        .accessibilityHidden(true)
+                    Text("Trash")
+                        .inkBody()
+                        .foregroundStyle(Ink.ink)
+                    Spacer()
+                    Text("30 days")
+                        .inkStamp(10)
+                        .stampCase()
+                        .foregroundStyle(Ink.inkSoft)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .black))
+                        .foregroundStyle(Ink.inkFaint)
+                        .accessibilityHidden(true)
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Trash")
+            .accessibilityHint("Deleted tasks are kept for 30 days before they're gone for good.")
         }
     }
 

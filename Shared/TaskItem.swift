@@ -42,6 +42,10 @@ struct TaskItem: Codable, Identifiable, Hashable, Sendable {
     var source: TaskSource
     var createdAt: Date
     var updatedAt: Date
+    /// Nil for a live task. Set the moment it's deleted rather than actually
+    /// removing the row, so Trash has something to show and restore for 30
+    /// days before a real purge catches up to it.
+    var deletedAt: Date?
 
     init(
         id: UUID = UUID(),
@@ -61,7 +65,8 @@ struct TaskItem: Codable, Identifiable, Hashable, Sendable {
         completedAt: Date? = nil,
         source: TaskSource = .manual,
         createdAt: Date = Date(),
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        deletedAt: Date? = nil
     ) {
         self.id = id
         self.userId = userId
@@ -81,6 +86,7 @@ struct TaskItem: Codable, Identifiable, Hashable, Sendable {
         self.source = source
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.deletedAt = deletedAt
     }
 }
 
@@ -90,7 +96,7 @@ extension TaskItem {
     enum CodingKeys: String, CodingKey {
         case id, userId, title, notes, status, priority, dueAt, hasTime, recurrence
         case tags, estimateMinutes, energy, parentId, sortIndex, completedAt
-        case source, createdAt, updatedAt
+        case source, createdAt, updatedAt, deletedAt
     }
 
     /// Written by hand for one reason: **every key must always be present.**
@@ -124,6 +130,7 @@ extension TaskItem {
         try encodeOptional(energy, forKey: .energy, in: &container)
         try encodeOptional(parentId, forKey: .parentId, in: &container)
         try encodeOptional(completedAt, forKey: .completedAt, in: &container)
+        try encodeOptional(deletedAt, forKey: .deletedAt, in: &container)
     }
 
     private func encodeOptional<T: Encodable>(
@@ -143,6 +150,8 @@ extension TaskItem {
 
 extension TaskItem {
     var isDone: Bool { status == .done }
+
+    var isTrashed: Bool { deletedAt != nil }
 
     var isOverdue: Bool {
         guard status == .open, let dueAt else { return false }

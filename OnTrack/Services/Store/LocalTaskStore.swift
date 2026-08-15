@@ -13,6 +13,14 @@ actor LocalTaskStore: TaskStore {
     }
 
     func loadAll() async throws -> [TaskItem] {
+        try await allCached().filter { $0.deletedAt == nil }
+    }
+
+    func loadTrash() async throws -> [TaskItem] {
+        try await allCached().filter { $0.deletedAt != nil }
+    }
+
+    private func allCached() async throws -> [TaskItem] {
         if let cache { return Array(cache.values) }
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             cache = [:]
@@ -49,9 +57,11 @@ actor LocalTaskStore: TaskStore {
         try persist(current)
     }
 
+    /// Everything on disk, live and trashed alike — what `upsert`/`delete`
+    /// actually mutate. Unlike `loadAll()`, nothing here is filtered out.
     private func loadAllAsDictionary() async throws -> [UUID: TaskItem] {
         if let cache { return cache }
-        _ = try await loadAll()
+        _ = try await allCached()
         return cache ?? [:]
     }
 

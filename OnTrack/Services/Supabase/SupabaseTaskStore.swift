@@ -11,7 +11,25 @@ struct SupabaseTaskStore: TaskStore {
             method: "GET",
             query: [
                 URLQueryItem(name: "select", value: "*"),
+                URLQueryItem(name: "deleted_at", value: "is.null"),
                 URLQueryItem(name: "order", value: "sort_index.asc")
+            ],
+            body: nil
+        )
+        do {
+            return try JSONCoding.decoder.decode([TaskItem].self, from: data)
+        } catch {
+            throw StoreError.decoding(String(describing: error))
+        }
+    }
+
+    func loadTrash() async throws -> [TaskItem] {
+        let data = try await request(
+            method: "GET",
+            query: [
+                URLQueryItem(name: "select", value: "*"),
+                URLQueryItem(name: "deleted_at", value: "not.is.null"),
+                URLQueryItem(name: "order", value: "deleted_at.desc")
             ],
             body: nil
         )

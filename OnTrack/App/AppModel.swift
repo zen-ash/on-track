@@ -67,6 +67,11 @@ final class AppModel {
     private(set) var isChatting = false
     private(set) var isDeletingAccount = false
 
+    /// Populated on demand by `loadTrash()` when the Trash screen opens, not
+    /// kept live like `tasks` — nothing else in the app needs to react to it.
+    private(set) var trashedTasks: [TaskItem] = []
+    private(set) var isLoadingTrash = false
+
     // MARK: - Dependencies
 
     private let localStore = LocalTaskStore()
@@ -87,6 +92,12 @@ final class AppModel {
     /// see `merge(current:inFlight:...)`. Never touched by any view, so it's
     /// exempt from observation tracking.
     @ObservationIgnored private var inFlightIDs: Set<UUID> = []
+
+    /// The full soft-deleted set behind `trashedTasks` (which hides a
+    /// subtask trashed alongside its parent) — kept around so
+    /// `restoreFromTrash`/`permanentlyDelete` can find and carry those
+    /// subtasks along without a second network round trip.
+    @ObservationIgnored private var trashedRaw: [TaskItem] = []
 
     /// The busy blocks the current plan was actually built against, so a
     /// later calendar-change notification has something to compare the fresh
@@ -126,6 +137,9 @@ final class AppModel {
         await refreshCalendarAccessState()
         startWatchingConnectivity()
         startWatchingCalendarChanges()
+        // Fire-and-forget: nothing on screen waits for this, and the Trash
+        // view applies the same 30-day cutoff itself if this hasn't run yet.
+        Task { await purgeExpiredTrash() }
 
         #if DEBUG
         if DemoSeed.isRequested && tasks.isEmpty {
@@ -523,19 +537,120 @@ final class AppModel {
         }
     }
 
+    /// A soft delete, not a real one: the row is upserted with `deletedAt`
+    /// set rather than removed from the store, so it lands in Trash instead
+    /// of vanishing the moment the undo toast times out. `PendingUndo` still
+    /// restores from `removed` — the untouched pre-delete copies — so
+    /// confirming undo within the toast's window is a second, independent
+    /// path back to the same place Trash would eventually offer.
     func delete(_ task: TaskItem) async {
         let removed = [task] + subtasks(of: task)
         let ids = removed.map(\.id)
         tasks.removeAll { ids.contains($0.id) }
         pendingUndo = PendingUndo(message: "Deleted “\(task.title)”", restore: removed, removeIfUndone: [])
 
+        let deletedAt = Date()
+        let trashed = removed.map { item -> TaskItem in
+            var copy = item
+            copy.deletedAt = deletedAt
+            copy.updatedAt = deletedAt
+            return copy
+        }
+
         inFlightIDs.formUnion(ids)
         defer { inFlightIDs.subtract(ids) }
         do {
-            try await store.delete(ids: ids)
+            try await store.upsert(trashed)
             await notifyDataChanged()
         } catch {
+            await pending.enqueueUpserts(trashed)
+        }
+    }
+
+    // MARK: - Trash
+
+    /// How long a deleted task stays recoverable before the sweep in
+    /// `purgeExpiredTrash()` removes it for real.
+    private static let trashRetentionDays = 30
+
+    private static func trashCutoff() -> Date {
+        Calendar.current.date(byAdding: .day, value: -trashRetentionDays, to: Date()) ?? .distantPast
+    }
+
+    /// Fetches everything soft-deleted in the last 30 days. Only top-level
+    /// rows are shown — a subtask trashed alongside its parent (the common
+    /// case: deleting a task takes its subtasks with it) isn't worth a row of
+    /// its own, since restoring or purging the parent already carries it
+    /// along. A subtask deleted on its own, with its parent still live, does
+    /// get a row — `restoreFromTrash`/`permanentlyDelete` key off `trashedRaw`
+    /// to know which case they're in.
+    func loadTrash() async {
+        isLoadingTrash = true
+        defer { isLoadingTrash = false }
+        do {
+            let cutoff = Self.trashCutoff()
+            let live = try await store.loadTrash().filter { ($0.deletedAt ?? .distantPast) >= cutoff }
+            let liveIDs = Set(live.map(\.id))
+            trashedRaw = live
+            trashedTasks = live
+                .filter { $0.parentId == nil || !liveIDs.contains($0.parentId!) }
+                .sorted { ($0.deletedAt ?? .distantPast) > ($1.deletedAt ?? .distantPast) }
+        } catch {
+            show(error)
+        }
+    }
+
+    /// Clears `deletedAt` on this row and any of its own subtasks that were
+    /// trashed alongside it, and moves them back into the live list.
+    func restoreFromTrash(_ task: TaskItem) async {
+        let group = [task] + trashedRaw.filter { $0.parentId == task.id }
+        let restored = group.map { item -> TaskItem in
+            var copy = item
+            copy.deletedAt = nil
+            copy.updatedAt = Date()
+            return copy
+        }
+        let ids = Set(restored.map(\.id))
+        trashedTasks.removeAll { ids.contains($0.id) }
+        trashedRaw.removeAll { ids.contains($0.id) }
+        applyLocally(restored)
+
+        do {
+            try await store.upsert(restored)
+            await notifyDataChanged()
+        } catch {
+            await pending.enqueueUpserts(restored)
+        }
+    }
+
+    /// Deletes this row for real, right now — the one place `store.delete`
+    /// still means "gone," not "trashed." Cascades to any subtask trashed
+    /// alongside it, same grouping `restoreFromTrash` uses.
+    func permanentlyDelete(_ task: TaskItem) async {
+        let group = [task] + trashedRaw.filter { $0.parentId == task.id }
+        let ids = group.map(\.id)
+        trashedTasks.removeAll { ids.contains($0.id) }
+        trashedRaw.removeAll { ids.contains($0.id) }
+
+        do {
+            try await store.delete(ids: ids)
+        } catch {
             await pending.enqueueDeletes(ids)
+        }
+    }
+
+    /// Best-effort background hygiene, run once per launch. Anything past its
+    /// 30 days is purged for real; a failure here just means the next launch
+    /// (or the next time Trash is opened, which applies the same cutoff) gets
+    /// another attempt — nothing user-facing depends on this succeeding.
+    private func purgeExpiredTrash() async {
+        do {
+            let cutoff = Self.trashCutoff()
+            let expired = try await store.loadTrash().filter { ($0.deletedAt ?? .distantPast) < cutoff }
+            guard !expired.isEmpty else { return }
+            try await store.delete(ids: expired.map(\.id))
+        } catch {
+            // Silent: see doc comment above.
         }
     }
 
