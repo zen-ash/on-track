@@ -66,6 +66,31 @@ struct RootView: View {
             guard let newValue else { return }
             AccessibilityNotification.Announcement(newValue.message).post()
         }
+        .onChange(of: model.calendarChangeNotice) { _, newValue in
+            guard let newValue else { return }
+            AccessibilityNotification.Announcement(newValue.message).post()
+        }
+        // A real question, not a status update — unlike the banner/toast
+        // above, this doesn't auto-dismiss, since missing it just means the
+        // plan quietly goes on being stale rather than anything reversible.
+        .confirmationDialog(
+            model.calendarChangeNotice?.message ?? "",
+            isPresented: Binding(
+                get: { model.calendarChangeNotice != nil },
+                set: { isPresented in if !isPresented { model.dismissCalendarChangeNotice() } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Update the plan") {
+                Task {
+                    await model.rebuildPlanForCalendarChange()
+                    model.route = .plan
+                }
+            }
+            Button("Not now", role: .cancel) {
+                model.dismissCalendarChangeNotice()
+            }
+        }
         .sheet(isPresented: $model.isCaptureOpen) {
             CaptureSheet(startListening: model.captureStartsListening)
                 .presentationDetents([.height(420), .large])

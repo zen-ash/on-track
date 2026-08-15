@@ -44,6 +44,11 @@ struct OnTrackApp: App {
                     // backgrounded, so it's re-read on every foreground
                     // rather than trusted from whenever it was last checked.
                     Task { await model.refreshCalendarAccessState() }
+                    // The live EKEventStoreChanged listener only fires while
+                    // the app is actually running — a change made from the
+                    // Calendar app itself while backgrounded needs this catch
+                    // on the way back in instead.
+                    Task { await model.checkForCalendarChangeSinceLastPlan() }
                 }
         }
     }

@@ -1,3 +1,4 @@
+import EventKit
 import Foundation
 import Network
 import Observation
@@ -54,6 +55,10 @@ final class AppModel {
     /// access later from iOS Settings while the app is backgrounded.
     private(set) var calendarAccessState: CalendarService.AccessState = .notDetermined
     private static let calendarAwarenessKey = "calendarAwarenessEnabled"
+    /// Set when the calendar changes after a plan already exists for the day
+    /// — "your 2pm got cancelled" territory. Cleared by rebuilding, waving it
+    /// off, or the existing plan itself going away.
+    var calendarChangeNotice: CalendarChangeNotice?
 
     /// AI surfaces
     private(set) var plan: DayPlan?
@@ -83,6 +88,17 @@ final class AppModel {
     /// exempt from observation tracking.
     @ObservationIgnored private var inFlightIDs: Set<UUID> = []
 
+    /// The busy blocks the current plan was actually built against, so a
+    /// later calendar-change notification has something to compare the fresh
+    /// read to. Empty whenever calendar awareness wasn't in play for it.
+    @ObservationIgnored private var planBusyBlocksSnapshot: [BusyBlock] = []
+    /// Runs for the app's lifetime once started; there's no toggle-driven
+    /// start/stop because checkForCalendarChangeSinceLastPlan() already no-ops
+    /// cheaply whenever calendar awareness is off or there's no plan to be
+    /// stale, and EKEventStoreChanged notifications require nothing this
+    /// doesn't already have permission to listen for.
+    @ObservationIgnored private var calendarChangeObserver: Task<Void, Never>?
+
     /// The store that owns the truth right now.
     private var store: any TaskStore {
         remoteStore ?? localStore
@@ -109,6 +125,7 @@ final class AppModel {
         await refresh()
         await refreshCalendarAccessState()
         startWatchingConnectivity()
+        startWatchingCalendarChanges()
 
         #if DEBUG
         if DemoSeed.isRequested && tasks.isEmpty {
@@ -358,6 +375,20 @@ final class AppModel {
             }
         }
         connectivity.start(queue: DispatchQueue(label: "com.aayush.ontrack.connectivity"))
+    }
+
+    /// EKEventStoreChanged is coarse and system-wide — it fires for any
+    /// change to any calendar, not just today's, and not just ones this app
+    /// would call "busy". checkForCalendarChangeSinceLastPlan() is what
+    /// decides whether a given firing actually meant anything.
+    private func startWatchingCalendarChanges() {
+        calendarChangeObserver?.cancel()
+        calendarChangeObserver = Task { [weak self] in
+            for await _ in NotificationCenter.default.notifications(named: .EKEventStoreChanged) {
+                guard let self else { return }
+                await self.checkForCalendarChangeSinceLastPlan()
+            }
+        }
     }
 
     // MARK: - Derived views of the list
@@ -641,10 +672,14 @@ final class AppModel {
     func buildPlan() async {
         isPlanning = true
         defer { isPlanning = false }
+        // A fresh plan is itself the update a pending notice was offering —
+        // whether the user got here by accepting it or just hit refresh.
+        calendarChangeNotice = nil
         do {
             let busy = (calendarAwarenessEnabled && calendarAccessState == .authorized)
                 ? await calendarService.busyBlocks(on: Date())
                 : []
+            planBusyBlocksSnapshot = busy
             plan = try await ai.plan(tasks: tasks, calendarBusy: busy)
         } catch {
             show(error)
@@ -671,6 +706,34 @@ final class AppModel {
         calendarAccessState = await calendarService.accessState
     }
 
+    /// Called after a live EKEventStoreChanged notification, and again on
+    /// every foreground — the live notification only fires while the app
+    /// itself is running, so a change made from the Calendar app while On
+    /// Track was backgrounded would otherwise go unnoticed until the next
+    /// plan was built anyway, silently.
+    func checkForCalendarChangeSinceLastPlan() async {
+        guard plan != nil, !isPlanning,
+              calendarAwarenessEnabled, calendarAccessState == .authorized else { return }
+
+        let current = await calendarService.busyBlocks(on: Date())
+        guard let notice = CalendarChangeNotice.forChange(from: planBusyBlocksSnapshot, to: current) else { return }
+
+        calendarChangeNotice = notice
+        // Recorded now, not just on rebuild — otherwise a second change
+        // arriving before the user acts on the first notice would compare
+        // against an already-stale snapshot and never notice anything new.
+        planBusyBlocksSnapshot = current
+    }
+
+    func rebuildPlanForCalendarChange() async {
+        calendarChangeNotice = nil
+        await buildPlan()
+    }
+
+    func dismissCalendarChangeNotice() {
+        calendarChangeNotice = nil
+    }
+
     func applyPlan() async {
         guard let plan else { return }
         // The plan's ordering becomes the list's ordering.
@@ -690,6 +753,7 @@ final class AppModel {
         }
         applyLocally(updates)
         self.plan = nil
+        calendarChangeNotice = nil
         route = .today
         let ids = updates.map(\.id)
         inFlightIDs.formUnion(ids)
@@ -703,6 +767,7 @@ final class AppModel {
 
     func dismissPlan() {
         plan = nil
+        calendarChangeNotice = nil
     }
 
     func send(chatMessage text: String) async {
@@ -799,4 +864,37 @@ struct PendingUndo: Identifiable, Equatable {
     let message: String
     let restore: [TaskItem]
     let removeIfUndone: [UUID]
+}
+
+/// "Your 2pm got cancelled — want an updated plan?" The comparison never
+/// touches what either block *is*, only when — consistent with busy blocks
+/// never carrying a title anywhere else in the app.
+struct CalendarChangeNotice: Identifiable, Equatable {
+    let id = UUID()
+    let message: String
+
+    /// nil when there's nothing worth saying — the two snapshots match, or
+    /// the diff isn't the kind of thing this can describe a single time for.
+    static func forChange(from old: [BusyBlock], to new: [BusyBlock]) -> CalendarChangeNotice? {
+        guard old != new else { return nil }
+
+        let removed = old.filter { !new.contains($0) }
+        let added = new.filter { !old.contains($0) }
+
+        let message: String
+        if removed.count == 1, added.isEmpty {
+            message = "Your \(timeLabel(removed[0].start)) commitment is gone — want an updated plan?"
+        } else if added.count == 1, removed.isEmpty {
+            message = "Something new landed on your calendar at \(timeLabel(added[0].start)) — want an updated plan?"
+        } else {
+            message = "Your calendar changed since this plan was built — want an updated plan?"
+        }
+        return CalendarChangeNotice(message: message)
+    }
+
+    private static func timeLabel(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mm a"
+        return formatter.string(from: date)
+    }
 }
