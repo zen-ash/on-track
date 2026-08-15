@@ -32,6 +32,9 @@ final class AppModel {
     var captureStartsListening = false
     var selectedTask: TaskItem?
     var banner: BannerMessage?
+    /// Armed by delete, skip, and marking a task done — the one place all three
+    /// converge so the toast and its 4-second window live in a single spot.
+    var pendingUndo: PendingUndo?
     #if DEBUG
     /// Lets -previewWidget render the real TodayWidgetView inside the app,
     /// since there's no way to drag a widget onto the Home Screen from the
@@ -59,6 +62,12 @@ final class AppModel {
     /// and @Observable can't synthesise storage for a lazy property.
     private var accountService: AccountService { AccountService(auth: auth) }
     private let connectivity = NWPathMonitor()
+
+    /// Ids with a store write in flight right now. `refresh()` consults this so
+    /// a concurrent read that started before the write landed can't clobber it —
+    /// see `merge(current:inFlight:...)`. Never touched by any view, so it's
+    /// exempt from observation tracking.
+    @ObservationIgnored private var inFlightIDs: Set<UUID> = []
 
     /// The store that owns the truth right now.
     private var store: any TaskStore {
@@ -204,6 +213,12 @@ final class AppModel {
 
         let outstanding = await pending.snapshot()
 
+        // Captured right before the network read: if a delete, an undo, or a
+        // skip lands in between this line and `loadAll()` returning, the read
+        // it raced against is stale, not the in-memory state — see `merge`.
+        let beforeFetch = tasks
+        let inFlightAtFetch = inFlightIDs
+
         do {
             let loaded = try await store.loadAll()
             // Mirror the server so the list stays readable without a network.
@@ -213,6 +228,8 @@ final class AppModel {
             // Whatever is still queued never reached the server. Merging it back
             // in is what stops a refresh from deleting work captured offline.
             tasks = Self.merge(
+                current: beforeFetch,
+                inFlight: inFlightAtFetch,
                 server: loaded,
                 pendingUpserts: outstanding.upserts,
                 pendingDeletes: Set(outstanding.deletes)
@@ -227,6 +244,8 @@ final class AppModel {
             }
             let cached = (try? await localStore.loadAll()) ?? []
             tasks = Self.merge(
+                current: beforeFetch,
+                inFlight: inFlightAtFetch,
                 server: cached,
                 pendingUpserts: outstanding.upserts,
                 pendingDeletes: Set(outstanding.deletes)
@@ -238,13 +257,39 @@ final class AppModel {
         await notifyDataChanged()
     }
 
-    /// Local edits win: they are strictly newer than whatever the server holds.
+    /// Local edits win over a same-or-older server snapshot.
+    ///
+    /// Two separate reasons a task in `current` might not match `server`:
+    /// queued writes (`pendingUpserts`/`pendingDeletes`, already durable on
+    /// disk, applied last so they always win) and writes that were merely in
+    /// flight — issued, not yet confirmed — at the moment `server` was read
+    /// (`inFlight`, sourced from `current`). Without the second case, a
+    /// refresh whose read straddles a delete, an undo, or a skip can silently
+    /// resurrect the row being deleted or drop the one just restored, because
+    /// nothing about that write ever touched the offline retry queue.
+    ///
+    /// Anything else missing from `server` is trusted as a real deletion —
+    /// one made on another device — and stays gone, matching
+    /// `LocalTaskStore.replaceAll`'s contract that a refresh propagates
+    /// deletions rather than merging around them.
     private static func merge(
+        current: [TaskItem],
+        inFlight: Set<UUID>,
         server: [TaskItem],
         pendingUpserts: [TaskItem],
         pendingDeletes: Set<UUID>
     ) -> [TaskItem] {
         var byID = Dictionary(server.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+        let currentByID = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
+
+        for id in inFlight {
+            if let local = currentByID[id] {
+                byID[id] = local
+            } else {
+                byID.removeValue(forKey: id)
+            }
+        }
+
         for item in pendingUpserts { byID[item.id] = item }
         for id in pendingDeletes { byID.removeValue(forKey: id) }
         return Array(byID.values)
@@ -350,6 +395,7 @@ final class AppModel {
         updated.updatedAt = Date()
 
         var toWrite = [updated]
+        var spawnedId: UUID?
 
         // A recurring task doesn't end when you finish it — it moves.
         if markingDone,
@@ -364,11 +410,25 @@ final class AppModel {
             spawned.createdAt = Date()
             spawned.updatedAt = Date()
             toWrite.append(spawned)
+            spawnedId = spawned.id
         }
 
         applyLocally(toWrite)
         InkHaptics.done()
 
+        // Only the forward action arms undo — reopening is already the undo of
+        // an earlier "done", and shouldn't chain into a second toast.
+        if markingDone {
+            pendingUndo = PendingUndo(
+                message: "Done: “\(task.title)”",
+                restore: [task],
+                removeIfUndone: spawnedId.map { [$0] } ?? []
+            )
+        }
+
+        let ids = toWrite.map(\.id)
+        inFlightIDs.formUnion(ids)
+        defer { inFlightIDs.subtract(ids) }
         do {
             try await store.upsert(toWrite)
             await notifyDataChanged()
@@ -384,6 +444,9 @@ final class AppModel {
             task.materialise(userId: session?.userId, source: source, sortIndex: base + Double(index))
         }
         applyLocally(items)
+        let ids = items.map(\.id)
+        inFlightIDs.formUnion(ids)
+        defer { inFlightIDs.subtract(ids) }
         do {
             try await store.upsert(items)
             await notifyDataChanged()
@@ -396,6 +459,8 @@ final class AppModel {
         var updated = task
         updated.updatedAt = Date()
         applyLocally([updated])
+        inFlightIDs.insert(updated.id)
+        defer { inFlightIDs.remove(updated.id) }
         do {
             try await store.upsert([updated])
             await notifyDataChanged()
@@ -405,15 +470,78 @@ final class AppModel {
     }
 
     func delete(_ task: TaskItem) async {
-        let children = subtasks(of: task).map(\.id)
-        let ids = [task.id] + children
+        let removed = [task] + subtasks(of: task)
+        let ids = removed.map(\.id)
         tasks.removeAll { ids.contains($0.id) }
+        pendingUndo = PendingUndo(message: "Deleted “\(task.title)”", restore: removed, removeIfUndone: [])
+
+        inFlightIDs.formUnion(ids)
+        defer { inFlightIDs.subtract(ids) }
         do {
             try await store.delete(ids: ids)
             await notifyDataChanged()
         } catch {
             await pending.enqueueDeletes(ids)
         }
+    }
+
+    /// Moves a recurring task to its next occurrence in place — same id, same
+    /// notes/tags/subtasks, only the due date changes. The alternative to
+    /// deleting it outright when "not this one" is what you mean, not "never
+    /// again."
+    func skipRecurrence(_ task: TaskItem) async {
+        guard let rule = task.recurrence,
+              let due = task.dueAt,
+              let next = Recurrence.nextDate(after: due, rule: rule) else { return }
+
+        var updated = task
+        updated.dueAt = next
+        updated.updatedAt = Date()
+        applyLocally([updated])
+        InkHaptics.tick()
+        pendingUndo = PendingUndo(message: "Skipped “\(task.title)”", restore: [task], removeIfUndone: [])
+
+        inFlightIDs.insert(updated.id)
+        defer { inFlightIDs.remove(updated.id) }
+        do {
+            try await store.upsert([updated])
+            await notifyDataChanged()
+        } catch {
+            await queueForLater([updated], error: error)
+        }
+    }
+
+    /// Reverses whatever's currently toasted: restores the pre-action snapshot
+    /// and removes anything that action spawned (a recurring task's next
+    /// occurrence, on undoing "done"). The action itself already happened —
+    /// this is a second write, not a rollback of one still in flight.
+    func confirmUndo() {
+        guard let undo = pendingUndo else { return }
+        pendingUndo = nil
+
+        Task {
+            let ids = undo.restore.map(\.id) + undo.removeIfUndone
+            inFlightIDs.formUnion(ids)
+            defer { inFlightIDs.subtract(ids) }
+
+            if !undo.removeIfUndone.isEmpty {
+                tasks.removeAll { undo.removeIfUndone.contains($0.id) }
+                try? await store.delete(ids: undo.removeIfUndone)
+            }
+            applyLocally(undo.restore)
+            do {
+                try await store.upsert(undo.restore)
+                await notifyDataChanged()
+            } catch {
+                await queueForLater(undo.restore, error: error)
+            }
+        }
+    }
+
+    /// Lets the toast's own timer (or a second undo-able action superseding
+    /// this one) clear it without reversing anything.
+    func dismissUndo() {
+        pendingUndo = nil
     }
 
     /// A write that didn't reach the server is queued rather than lost, and the
@@ -517,6 +645,9 @@ final class AppModel {
         applyLocally(updates)
         self.plan = nil
         route = .today
+        let ids = updates.map(\.id)
+        inFlightIDs.formUnion(ids)
+        defer { inFlightIDs.subtract(ids) }
         do {
             try await store.upsert(updates)
         } catch {
@@ -558,6 +689,9 @@ final class AppModel {
                 )
             }
             applyLocally(children)
+            let ids = children.map(\.id)
+            inFlightIDs.formUnion(ids)
+            defer { inFlightIDs.subtract(ids) }
             try await store.upsert(children)
         } catch {
             show(error)
@@ -608,4 +742,15 @@ struct BannerMessage: Identifiable, Equatable {
     let id = UUID()
     let text: String
     var isError: Bool
+}
+
+/// A reversible action waiting out its toast. `restore` is the exact
+/// pre-action snapshot to write back; `removeIfUndone` is anything the action
+/// spawned that undo should also remove (a recurring task's next occurrence,
+/// created the moment its predecessor was marked done).
+struct PendingUndo: Identifiable, Equatable {
+    let id = UUID()
+    let message: String
+    let restore: [TaskItem]
+    let removeIfUndone: [UUID]
 }

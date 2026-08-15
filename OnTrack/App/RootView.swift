@@ -22,12 +22,38 @@ struct RootView: View {
                 BannerView(message: banner)
                     .transition(.move(edge: .top).combined(with: .opacity))
                     .task(id: banner.id) {
-                        try? await Task.sleep(for: .seconds(3.5))
-                        withAnimation(.easeOut(duration: 0.25)) { model.banner = nil }
+                        // `id: banner.id` cancels this task the instant a second
+                        // banner replaces the first. `try?` would swallow that
+                        // cancellation and fall through to clearing `banner`
+                        // anyway — wiping out the *new* banner microseconds
+                        // after it appeared. Only a sleep that ran to completion
+                        // gets to dismiss it.
+                        do {
+                            try await Task.sleep(for: .seconds(3.5))
+                            withAnimation(.easeOut(duration: 0.25)) { model.banner = nil }
+                        } catch {}
                     }
+            }
+
+            if let pendingUndo = model.pendingUndo {
+                UndoToastView(pending: pendingUndo) {
+                    InkHaptics.tick()
+                    model.confirmUndo()
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .task(id: pendingUndo.id) {
+                    // Same reasoning as the banner above: a swallowed
+                    // cancellation here would let a superseded toast's timer
+                    // dismiss whatever toast replaced it.
+                    do {
+                        try await Task.sleep(for: .seconds(4))
+                        model.dismissUndo()
+                    } catch {}
+                }
             }
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: model.banner)
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: model.pendingUndo)
         .sheet(isPresented: $model.isCaptureOpen) {
             CaptureSheet(startListening: model.captureStartsListening)
                 .presentationDetents([.height(420), .large])
@@ -211,6 +237,49 @@ private struct WidgetPreviewSheet: View {
     }
 }
 #endif
+
+// MARK: - Undo toast
+
+/// Sits above the capture bar rather than up with the banner — a delete, a
+/// skip, and "couldn't reach the server" are different registers of news, and
+/// stacking both at the top would make an unrelated error look like it undoes
+/// the thing you just did.
+private struct UndoToastView: View {
+    let pending: PendingUndo
+    let onUndo: () -> Void
+
+    var body: some View {
+        VStack {
+            Spacer()
+
+            HStack(spacing: 14) {
+                Text(pending.message)
+                    .font(InkType.bodySmall)
+                    .foregroundStyle(Ink.paper)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                Spacer(minLength: 8)
+
+                Button(action: onUndo) {
+                    Text("Undo")
+                        .font(InkType.stamp(11))
+                        .stampCase()
+                        .foregroundStyle(Ink.paper)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background {
+                RoughRect(seed: 909, wobble: 1.8, corner: 5)
+                    .fill(Ink.ink)
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 86)
+        }
+    }
+}
 
 // MARK: - Banner
 

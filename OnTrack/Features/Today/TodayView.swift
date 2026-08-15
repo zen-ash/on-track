@@ -2,6 +2,10 @@ import SwiftUI
 
 struct TodayView: View {
     @Environment(AppModel.self) private var model
+    /// Ending a series is the one swipe action that can't just be undone with a
+    /// toast in any obviously-reversible-feeling way, so it gets an actual
+    /// question instead of a silent full-swipe.
+    @State private var pendingEndSeries: TaskItem?
 
     var body: some View {
         Group {
@@ -12,6 +16,24 @@ struct TodayView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .confirmationDialog(
+            "End “\(pendingEndSeries?.title ?? "")”?",
+            isPresented: Binding(
+                get: { pendingEndSeries != nil },
+                set: { isPresented in if !isPresented { pendingEndSeries = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("End series", role: .destructive) {
+                if let task = pendingEndSeries {
+                    Task { await model.delete(task) }
+                }
+                pendingEndSeries = nil
+            }
+            Button("Cancel", role: .cancel) { pendingEndSeries = nil }
+        } message: {
+            Text("This stops every future occurrence, not just this one. You can undo right after.")
+        }
     }
 
     private var list: some View {
@@ -62,19 +84,40 @@ struct TodayView: View {
     }
 
     private func row(_ task: TaskItem) -> some View {
-        TaskRow(task: task, subtasks: model.subtasks(of: task))
+        // An open recurring task gets Skip/End instead of a single Delete —
+        // otherwise one swipe silently ends the whole series with no way to
+        // say "not this one" and no warning it's gone for good.
+        let offersRecurringActions = task.isRecurring && !task.isDone
+
+        return TaskRow(task: task, subtasks: model.subtasks(of: task))
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
             .listRowInsets(EdgeInsets(top: 3, leading: 20, bottom: 3, trailing: 20))
             .contentShape(Rectangle())
             .onTapGesture { model.selectedTask = task }
-            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                Button(role: .destructive) {
-                    Task { await model.delete(task) }
-                } label: {
-                    Label("Delete", systemImage: "trash")
+            .swipeActions(edge: .trailing, allowsFullSwipe: !offersRecurringActions) {
+                if offersRecurringActions {
+                    Button {
+                        Task { await model.skipRecurrence(task) }
+                    } label: {
+                        Label("Skip", systemImage: "arrow.uturn.forward")
+                    }
+                    .tint(Ink.ink)
+
+                    Button(role: .destructive) {
+                        pendingEndSeries = task
+                    } label: {
+                        Label("End", systemImage: "trash")
+                    }
+                    .tint(Ink.alarm)
+                } else {
+                    Button(role: .destructive) {
+                        Task { await model.delete(task) }
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                    .tint(Ink.alarm)
                 }
-                .tint(Ink.alarm)
             }
             .swipeActions(edge: .leading, allowsFullSwipe: true) {
                 Button {
