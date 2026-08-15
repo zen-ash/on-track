@@ -72,6 +72,13 @@ final class AppModel {
     private(set) var trashedTasks: [TaskItem] = []
     private(set) var isLoadingTrash = false
 
+    /// Tasks where this device's own edit lost a race to another device's —
+    /// `recordConflicts` appends to this, `refresh()` is the only thing that
+    /// ever populates it. Session-only: there's nowhere durable to keep "the
+    /// version that lost" once the server has moved on, so this doesn't
+    /// survive a relaunch the way Trash does.
+    private(set) var conflicts: [TaskConflict] = []
+
     // MARK: - Dependencies
 
     private let localStore = LocalTaskStore()
@@ -98,6 +105,12 @@ final class AppModel {
     /// `restoreFromTrash`/`permanentlyDelete` can find and carry those
     /// subtasks along without a second network round trip.
     @ObservationIgnored private var trashedRaw: [TaskItem] = []
+
+    /// What this device most recently wrote for each task, set by
+    /// `applyLocally`. Only tasks actually edited *on this device* are
+    /// tracked, so a task nobody has touched here can never falsely read as
+    /// "changed elsewhere" — there was never a local belief to contradict.
+    @ObservationIgnored private var myLastWrites: [UUID: TaskItem] = [:]
 
     /// The busy blocks the current plan was actually built against, so a
     /// later calendar-change notification has something to compare the fresh
@@ -278,6 +291,12 @@ final class AppModel {
             // Mirror the server so the list stays readable without a network.
             if remoteStore != nil {
                 try? await localStore.replaceAll(loaded)
+                // Only meaningful with a backend — local mode has no "another
+                // device" for a conflict to come from. A fresh, authoritative
+                // read is exactly the moment to check for one; the offline
+                // fallback below reads the local mirror, not the server, so
+                // it never runs this.
+                recordConflicts(against: loaded, outstandingIDs: inFlightAtFetch.union(outstanding.deletes).union(outstanding.upserts.map(\.id)))
             }
             // Whatever is still queued never reached the server. Merging it back
             // in is what stops a refresh from deleting work captured offline.
@@ -654,6 +673,78 @@ final class AppModel {
         }
     }
 
+    // MARK: - Conflicts
+
+    /// Diffs a fresh, authoritative server read against what this device
+    /// last wrote for each task it has actually touched. A task tracked in
+    /// `myLastWrites` that now reads differently on the server — and isn't
+    /// explained by a write of ours still in flight or queued — was changed
+    /// by something other than this device after our own write landed, i.e.
+    /// silently overwritten by it (every write here replaces the whole row,
+    /// there's no field-level merge on the server side).
+    ///
+    /// Called from `refresh()`'s success path only: the offline fallback
+    /// reads the local mirror, not the server, so it has nothing
+    /// authoritative to diff against and would only manufacture false
+    /// positives out of its own stale cache.
+    private func recordConflicts(against server: [TaskItem], outstandingIDs: Set<UUID>) {
+        let serverByID = Dictionary(uniqueKeysWithValues: server.map { ($0.id, $0) })
+
+        for (id, mine) in myLastWrites {
+            guard !outstandingIDs.contains(id) else { continue }
+            guard let theirs = serverByID[id] else { continue }
+            guard Self.hasConflictingContent(mine, theirs) else { continue }
+
+            // Our belief resets to what's actually live now — otherwise the
+            // same divergence would flag again on every future refresh.
+            myLastWrites[id] = theirs
+            conflicts.removeAll { $0.taskId == id }
+            conflicts.append(TaskConflict(taskId: id, mine: mine, theirs: theirs, detectedAt: Date()))
+        }
+    }
+
+    /// `updatedAt`/`createdAt` always differ between two writes and say
+    /// nothing on their own; `sortIndex` just reflects manual reordering,
+    /// which races constantly and harmlessly and isn't worth a notice.
+    /// Everything else is something a person actually typed or chose.
+    private static func hasConflictingContent(_ a: TaskItem, _ b: TaskItem) -> Bool {
+        a.title != b.title ||
+            a.notes != b.notes ||
+            a.status != b.status ||
+            a.priority != b.priority ||
+            a.dueAt != b.dueAt ||
+            a.hasTime != b.hasTime ||
+            a.recurrence != b.recurrence ||
+            a.tags != b.tags ||
+            a.estimateMinutes != b.estimateMinutes ||
+            a.energy != b.energy ||
+            a.parentId != b.parentId ||
+            a.completedAt != b.completedAt
+    }
+
+    /// Writes this device's losing copy back over the version that won.
+    func resolveConflictKeepingMine(_ conflict: TaskConflict) async {
+        conflicts.removeAll { $0.id == conflict.id }
+        var mine = conflict.mine
+        mine.updatedAt = Date()
+        applyLocally([mine])
+
+        inFlightIDs.insert(mine.id)
+        defer { inFlightIDs.remove(mine.id) }
+        do {
+            try await store.upsert([mine])
+            await notifyDataChanged()
+        } catch {
+            await pending.enqueueUpserts([mine])
+        }
+    }
+
+    /// Accepts the version that already won — it's already what's live in
+    /// `tasks`, so this is just clearing the notice, not writing anything.
+    func dismissConflict(_ conflict: TaskConflict) {
+        conflicts.removeAll { $0.id == conflict.id }
+    }
+
     /// Moves a recurring task to its next occurrence in place — same id, same
     /// notes/tags/subtasks, only the due date changes. The alternative to
     /// deleting it outright when "not this one" is what you mean, not "never
@@ -749,6 +840,12 @@ final class AppModel {
             } else {
                 tasks.append(item)
             }
+            // What this device most recently intended for this task — the
+            // baseline `recordConflicts` diffs a fresh server read against.
+            // Deletes don't go through here on purpose: `delete(_:)` mutates
+            // `tasks` directly, so a soft-deleted task simply drops out of
+            // tracking rather than being flagged against later.
+            myLastWrites[item.id] = item
         }
     }
 
@@ -979,6 +1076,19 @@ struct PendingUndo: Identifiable, Equatable {
     let message: String
     let restore: [TaskItem]
     let removeIfUndone: [UUID]
+}
+
+/// A task where this device's own edit and another device's edit raced, and
+/// the other one won — `mine` never reached the server as the final word,
+/// `theirs` is what's actually live right now. Both are full snapshots
+/// rather than a field-level diff, since a whole-row overwrite is exactly
+/// what happened.
+struct TaskConflict: Identifiable, Equatable {
+    let id = UUID()
+    let taskId: UUID
+    let mine: TaskItem
+    let theirs: TaskItem
+    let detectedAt: Date
 }
 
 /// "Your 2pm got cancelled — want an updated plan?" The comparison never

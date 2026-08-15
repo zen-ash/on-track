@@ -6,6 +6,7 @@ struct SettingsView: View {
 
     @State private var isConfirmingDelete = false
     @State private var isShowingTrash = false
+    @State private var isShowingConflicts = false
 
     var body: some View {
         ZStack {
@@ -35,6 +36,9 @@ struct SettingsView: View {
         }
         .sheet(isPresented: $isShowingTrash) {
             TrashView().presentationBackground(Ink.paper)
+        }
+        .sheet(isPresented: $isShowingConflicts) {
+            ConflictsView().presentationBackground(Ink.paper)
         }
     }
 
@@ -281,6 +285,34 @@ struct SettingsView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Trash")
             .accessibilityHint("Deleted tasks are kept for 30 days before they're gone for good.")
+
+            if !model.isLocalMode {
+                Button {
+                    isShowingConflicts = true
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "arrow.triangle.branch")
+                            .font(.system(size: 13, weight: .black))
+                            .foregroundStyle(model.conflicts.isEmpty ? Ink.ink : Ink.alarm)
+                            .frame(width: 16)
+                            .accessibilityHidden(true)
+                        Text("Conflicts")
+                            .inkBody()
+                            .foregroundStyle(Ink.ink)
+                        Spacer()
+                        if !model.conflicts.isEmpty {
+                            StampLabel(text: "\(model.conflicts.count)", filled: true, tint: Ink.alarm, seed: 1036)
+                        }
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11, weight: .black))
+                            .foregroundStyle(Ink.inkFaint)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(model.conflicts.isEmpty ? "Conflicts, none" : "Conflicts, \(model.conflicts.count)")
+                .accessibilityHint("Shows any task that was edited here and on another device at the same time, where the other edit won.")
+            }
         }
     }
 
