@@ -115,6 +115,10 @@ final class AppModel {
             let sample = DemoSeed.tasks()
             applyLocally(sample)
             try? await store.upsert(sample)
+            // Every other mutator calls this after writing; seeding bypassed
+            // it, which meant the widget snapshot never got written and a
+            // screenshot run showed a populated list but an empty widget.
+            await notifyDataChanged()
         }
         #endif
     }
