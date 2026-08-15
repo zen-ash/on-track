@@ -214,7 +214,8 @@ const CAPTURED_TASK_SCHEMA = {
     },
     recurrence: {
       type: ["string", "null"],
-      description: "RRULE-lite such as FREQ=DAILY, FREQ=WEEKLY;BYDAY=MO,WE,FR, FREQ=MONTHLY. Null for one-offs.",
+      description:
+        "RRULE-lite. FREQ=DAILY, FREQ=WEEKLY;BYDAY=MO,WE,FR, FREQ=MONTHLY, FREQ=YEARLY. Add INTERVAL for 'every N' — FREQ=WEEKLY;INTERVAL=2 for 'every 2 weeks'/'biweekly'/'every other week'. For a fixed day of the month use BYMONTHDAY — FREQ=MONTHLY;BYMONTHDAY=15 for 'the 15th', BYMONTHDAY=-1 for 'the last day of the month'. For an Nth or last weekday of the month use BYDAY with BYSETPOS — FREQ=MONTHLY;BYDAY=FR;BYSETPOS=-1 for 'the last Friday', FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1 for 'the last weekday of the month'. Null for one-offs.",
     },
     estimate_minutes: { type: ["integer", "null"] },
     energy: { type: ["string", "null"], enum: ["low", "medium", "high", null] },
@@ -542,7 +543,11 @@ const TOOLS = [
           due_at: { type: ["string", "null"], description: "ISO 8601 with offset, or null." },
           has_time: { type: "boolean", description: "True only if a time of day was stated." },
           priority: { type: "integer", description: "0 none, 1 low, 2 medium/important, 3 urgent. 'High priority' means 3." },
-          recurrence: { type: ["string", "null"], description: "RRULE-lite e.g. FREQ=WEEKLY;BYDAY=MO,WE,FR. Null for one-offs." },
+          recurrence: {
+            type: ["string", "null"],
+            description:
+              "RRULE-lite, e.g. FREQ=WEEKLY;BYDAY=MO,WE,FR, FREQ=WEEKLY;INTERVAL=2 for biweekly, FREQ=MONTHLY;BYMONTHDAY=15 for a fixed day, FREQ=MONTHLY;BYDAY=FR;BYSETPOS=-1 for the last Friday of the month. Null for one-offs.",
+          },
           tags: { type: "array", items: { type: "string" }, description: "Only tags the user actually said. Usually empty." },
         },
         required: ["title", "due_at", "has_time", "priority", "recurrence", "tags"],

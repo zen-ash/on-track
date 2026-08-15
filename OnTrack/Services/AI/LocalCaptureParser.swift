@@ -166,6 +166,16 @@ struct LocalCaptureParser: AIService, Sendable {
         let rule = detectRecurrence(in: text.lowercased())
         guard let rule else { return nil }
 
+        // Strip whichever phrase produced the rule. Applying every pattern
+        // unconditionally is simpler than tracking which one actually fired,
+        // and a non-matching pattern is just a no-op.
+        removeAll(#"\b(?:last|first|1st|second|2nd|third|3rd|fourth|4th)\s+(?:\#(weekdayPattern)|weekdays?)\s+of\s+(?:the|every|each)\s+month\b"#, from: &text)
+        removeAll(#"\blast\s+day\s+of\s+(?:the|every|each)\s+month\b"#, from: &text)
+        removeAll(#"\bthe\s+\d{1,2}(?:st|nd|rd|th)\s+of\s+(?:the|every|each)\s+month\b"#, from: &text)
+        removeAll(#"\b(?:monthly|every month|each month)\s+on\s+the\s+\d{1,2}(?:st|nd|rd|th)\b"#, from: &text)
+        removeAll(#"\bevery\s+other\s+(?:day|week|month|year)\b"#, from: &text)
+        removeAll(#"\b(?:biweekly|fortnightly)\b"#, from: &text)
+        removeAll(#"\bevery\s+\d{1,2}\s+(?:days?|weeks?|months?|years?)\b"#, from: &text)
         // Strip the phrase that produced the rule, longest patterns first so
         // "every day" goes before a bare "every".
         removeAll(#"\b(every|each)\s+(single\s+)?(day|week|month|year)\b"#, from: &text)
@@ -181,7 +191,17 @@ struct LocalCaptureParser: AIService, Sendable {
         guard lowered.contains("every") || lowered.contains("daily")
                 || lowered.contains("weekly") || lowered.contains("monthly")
                 || lowered.contains("yearly") || lowered.contains("annually")
+                || lowered.contains("biweekly") || lowered.contains("fortnightly")
+                // Catches "of the month" / "of every month" — "last Friday
+                // of the month" contains neither "monthly" nor "every".
+                || lowered.contains("month")
                 || lowered.contains("each ") else { return nil }
+
+        // Most specific first, so a general "every"/"monthly" check further
+        // down can't swallow a phrase a more specific pattern should catch.
+        if let rule = monthlyBySetPosRule(in: lowered) { return rule }
+        if let rule = monthlyByMonthDayRule(in: lowered) { return rule }
+        if let rule = intervalRule(in: lowered) { return rule }
 
         if lowered.contains("daily") || lowered.contains("every day") || lowered.contains("each day") {
             return "FREQ=DAILY"
@@ -209,6 +229,77 @@ struct LocalCaptureParser: AIService, Sendable {
             return "FREQ=WEEKLY"
         }
         return nil
+    }
+
+    /// "last Friday of the month", "last weekday of every month", "second
+    /// Tuesday of the month" — an ordinal, a weekday (or the bare word
+    /// "weekday" for any of Mon–Fri), then "of the/every/each month".
+    private static func monthlyBySetPosRule(in lowered: String) -> String? {
+        let ordinalPattern = ordinalWords.map { NSRegularExpression.escapedPattern(for: $0.0) }.joined(separator: "|")
+        guard let match = firstMatch(
+            #"\b(\#(ordinalPattern))\s+(\#(weekdayPattern)|weekdays?)\s+of\s+(?:the|every|each)\s+month\b"#,
+            in: lowered
+        ) else { return nil }
+
+        guard let ordinalText = match.groups[0]?.lowercased(),
+              let setPos = ordinalWords.first(where: { $0.0 == ordinalText })?.1 else { return nil }
+
+        let dayText = (match.groups[1] ?? "").lowercased()
+        let byDay: String
+        if dayText.hasPrefix("weekday") {
+            byDay = "MO,TU,WE,TH,FR"
+        } else if let code = weekdayCodes.first(where: { dayText == $0.0 })?.1 {
+            byDay = code
+        } else {
+            return nil
+        }
+        return "FREQ=MONTHLY;BYDAY=\(byDay);BYSETPOS=\(setPos)"
+    }
+
+    private static let ordinalWords: [(String, Int)] = [
+        ("last", -1), ("first", 1), ("1st", 1),
+        ("second", 2), ("2nd", 2),
+        ("third", 3), ("3rd", 3),
+        ("fourth", 4), ("4th", 4)
+    ]
+
+    /// "the 15th of every month", "monthly on the 5th", "last day of the
+    /// month" — a fixed day within the month, not a specific calendar date.
+    private static func monthlyByMonthDayRule(in lowered: String) -> String? {
+        if firstMatch(#"\blast\s+day\s+of\s+(?:the|every|each)\s+month\b"#, in: lowered) != nil {
+            return "FREQ=MONTHLY;BYMONTHDAY=-1"
+        }
+        if let match = firstMatch(#"\bthe\s+(\d{1,2})(?:st|nd|rd|th)\s+of\s+(?:the|every|each)\s+month\b"#, in: lowered),
+           let day = Int(match.groups[0] ?? ""), (1...31).contains(day) {
+            return "FREQ=MONTHLY;BYMONTHDAY=\(day)"
+        }
+        if let match = firstMatch(#"\b(?:monthly|every month|each month)\s+on\s+the\s+(\d{1,2})(?:st|nd|rd|th)\b"#, in: lowered),
+           let day = Int(match.groups[0] ?? ""), (1...31).contains(day) {
+            return "FREQ=MONTHLY;BYMONTHDAY=\(day)"
+        }
+        return nil
+    }
+
+    /// "every 2 weeks", "every other week", "biweekly", "every 3 days" — a
+    /// bare numeric or word-form interval, with no specific day attached.
+    private static func intervalRule(in lowered: String) -> String? {
+        if lowered.contains("biweekly") || lowered.contains("fortnightly") || lowered.contains("every other week") {
+            return "FREQ=WEEKLY;INTERVAL=2"
+        }
+        if lowered.contains("every other day") { return "FREQ=DAILY;INTERVAL=2" }
+        if lowered.contains("every other month") { return "FREQ=MONTHLY;INTERVAL=2" }
+        if lowered.contains("every other year") { return "FREQ=YEARLY;INTERVAL=2" }
+
+        guard let match = firstMatch(#"\bevery\s+(\d{1,2})\s+(days?|weeks?|months?|years?)\b"#, in: lowered),
+              let n = Int(match.groups[0] ?? ""), n > 1 else { return nil }
+
+        let unit = (match.groups[1] ?? "").lowercased()
+        let freq: String
+        if unit.hasPrefix("day") { freq = "DAILY" }
+        else if unit.hasPrefix("week") { freq = "WEEKLY" }
+        else if unit.hasPrefix("month") { freq = "MONTHLY" }
+        else { freq = "YEARLY" }
+        return "FREQ=\(freq);INTERVAL=\(n)"
     }
 
     // MARK: - Time of day
