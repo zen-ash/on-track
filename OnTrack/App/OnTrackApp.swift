@@ -21,6 +21,9 @@ struct OnTrackApp: App {
                     } else if arguments.contains("-openTyping") {
                         model.openQuickCapture(startListening: false)
                     }
+                    if arguments.contains("-previewWidget") {
+                        model.isPreviewingWidget = true
+                    }
                     #endif
                 }
                 .onOpenURL { url in model.handle(url: url) }

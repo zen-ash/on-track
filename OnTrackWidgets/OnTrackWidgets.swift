@@ -9,6 +9,7 @@ struct OnTrackWidgetsBundle: WidgetBundle {
     var body: some Widget {
         QuickCaptureControl()
         QuickCaptureLockScreenWidget()
+        TodayWidget()
     }
 }
 
@@ -33,7 +34,7 @@ struct QuickCaptureControl: ControlWidget {
 
 struct QuickCaptureLockScreenWidget: Widget {
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: "com.aayush.ontrack.widget.capture", provider: CaptureProvider()) { _ in
+        StaticConfiguration(kind: WidgetKind.capture, provider: CaptureProvider()) { _ in
             CaptureWidgetView()
                 .widgetURL(captureURL)
                 .containerBackground(.fill.tertiary, for: .widget)

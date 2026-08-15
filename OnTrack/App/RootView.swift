@@ -1,4 +1,7 @@
 import SwiftUI
+#if DEBUG
+import WidgetKit
+#endif
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
@@ -44,6 +47,11 @@ struct RootView: View {
         .sheet(isPresented: routeBinding(for: .settings)) {
             SettingsView().presentationBackground(Ink.paper)
         }
+        #if DEBUG
+        .sheet(isPresented: $model.isPreviewingWidget) {
+            WidgetPreviewSheet()
+        }
+        #endif
     }
 
     /// The route is a single value, but sheets each want their own Bool.
@@ -157,6 +165,52 @@ private struct CaptureBar: View {
         }
     }
 }
+
+#if DEBUG
+// MARK: - Widget preview (debug only)
+
+/// Renders the real `TodayWidgetView` — not a lookalike — at approximate
+/// widget tile sizes, using whatever is actually in `model.tasks`. The only
+/// practical way to check a widget's appearance without Xcode's GUI or
+/// dragging one onto a real Home Screen.
+private struct WidgetPreviewSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+
+    private var entry: TodayEntry {
+        TodayEntry(date: Date(), tasks: model.tasks)
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 24) {
+                Text("Small").font(InkType.stamp(11)).stampCase()
+                tile(width: 155, height: 155) {
+                    TodayWidgetView(entry: entry, forcedFamily: .systemSmall)
+                }
+
+                Text("Medium").font(InkType.stamp(11)).stampCase()
+                tile(width: 329, height: 155) {
+                    TodayWidgetView(entry: entry, forcedFamily: .systemMedium)
+                }
+
+                Button("Close") { dismiss() }
+                    .buttonStyle(InkOutlineButtonStyle(seed: 999))
+            }
+            .padding(24)
+        }
+        .background(Color(white: 0.85))
+    }
+
+    private func tile(width: CGFloat, height: CGFloat, @ViewBuilder content: () -> some View) -> some View {
+        content()
+            .frame(width: width, height: height)
+            .background(PaperBackground())
+            .clipShape(RoundedRectangle(cornerRadius: 24))
+            .shadow(radius: 6)
+    }
+}
+#endif
 
 // MARK: - Banner
 

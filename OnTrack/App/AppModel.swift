@@ -2,6 +2,7 @@ import Foundation
 import Network
 import Observation
 import SwiftUI
+import WidgetKit
 
 /// Which screen is up. Kept as explicit state rather than NavigationPath because
 /// quick-capture can be launched from outside the app and must be able to take
@@ -31,6 +32,12 @@ final class AppModel {
     var captureStartsListening = false
     var selectedTask: TaskItem?
     var banner: BannerMessage?
+    #if DEBUG
+    /// Lets -previewWidget render the real TodayWidgetView inside the app,
+    /// since there's no way to drag a widget onto the Home Screen from the
+    /// command line.
+    var isPreviewingWidget = false
+    #endif
 
     /// AI surfaces
     private(set) var plan: DayPlan?
@@ -161,7 +168,7 @@ final class AppModel {
         chatHistory = []
         tasks = []
         selectedTask = nil
-        await syncReminders()
+        await notifyDataChanged()
 
         show(message: "Account deleted. Nothing is left on the server.")
         return true
@@ -228,7 +235,7 @@ final class AppModel {
             // the queue means nothing is at risk.
         }
 
-        await syncReminders()
+        await notifyDataChanged()
     }
 
     /// Local edits win: they are strictly newer than whatever the server holds.
@@ -364,7 +371,7 @@ final class AppModel {
 
         do {
             try await store.upsert(toWrite)
-            await syncReminders()
+            await notifyDataChanged()
         } catch {
             await queueForLater(toWrite, error: error)
         }
@@ -379,7 +386,7 @@ final class AppModel {
         applyLocally(items)
         do {
             try await store.upsert(items)
-            await syncReminders()
+            await notifyDataChanged()
         } catch {
             await queueForLater(items, error: error)
         }
@@ -391,7 +398,7 @@ final class AppModel {
         applyLocally([updated])
         do {
             try await store.upsert([updated])
-            await syncReminders()
+            await notifyDataChanged()
         } catch {
             await queueForLater([updated], error: error)
         }
@@ -403,7 +410,7 @@ final class AppModel {
         tasks.removeAll { ids.contains($0.id) }
         do {
             try await store.delete(ids: ids)
-            await syncReminders()
+            await notifyDataChanged()
         } catch {
             await pending.enqueueDeletes(ids)
         }
@@ -421,7 +428,14 @@ final class AppModel {
         show(message: "Saved on this phone. It'll sync when you're back online.")
     }
 
-    private func syncReminders() async {
+    /// The one place every mutator converges on, so the widget and local
+    /// notifications can't drift out of sync with what the list actually says.
+    private func notifyDataChanged() async {
+        // Cheap, local, and has no permission dialog to block on, so — unlike
+        // reminders below — this runs even during a seeded demo/screenshot run.
+        WidgetSnapshotStore.write(tasks)
+        WidgetCenter.shared.reloadTimelines(ofKind: WidgetKind.today)
+
         #if DEBUG
         // Seeded demo data is for screenshots — it shouldn't schedule dozens of
         // real notifications on the device it's running on.
@@ -569,6 +583,11 @@ final class AppModel {
             route = .plan
         case "chat":
             route = .chat
+        case "today":
+            // Where the Home Screen widget's tap target lands. Today is
+            // already the default screen, but naming the route explicitly
+            // means that stays true even if the default ever changes.
+            route = .today
         default:
             break
         }
