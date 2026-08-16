@@ -17,4 +17,5 @@ enum WidgetKind {
     static let today = "com.aayush.ontrack.widget.today"
     static let capture = "com.aayush.ontrack.widget.capture"
     static let focus = "com.aayush.ontrack.widget.focus"
+    static let combined = "com.aayush.ontrack.widget.combined"
 }

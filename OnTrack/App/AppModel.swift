@@ -897,6 +897,7 @@ final class AppModel {
         // reminders below — this runs even during a seeded demo/screenshot run.
         WidgetSnapshotStore.write(tasks)
         WidgetCenter.shared.reloadTimelines(ofKind: WidgetKind.today)
+        WidgetCenter.shared.reloadTimelines(ofKind: WidgetKind.combined) // shows the same task counts, so it's stale on exactly the same changes.
 
         #if DEBUG
         // Seeded demo data is for screenshots — it shouldn't schedule dozens of
@@ -987,6 +988,7 @@ final class AppModel {
     private func notifyFocusDataChanged() {
         FocusWidgetSnapshotStore.write(tracks: focusTracks, todaysSessions: todaysFocusSessions)
         WidgetCenter.shared.reloadTimelines(ofKind: WidgetKind.focus)
+        WidgetCenter.shared.reloadTimelines(ofKind: WidgetKind.combined) // same reasoning as notifyDataChanged's own combined reload, for the Focus half.
     }
 
     /// Per-track total for today, including whatever's live in `activeFocus`

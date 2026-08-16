@@ -382,6 +382,10 @@ private struct WidgetPreviewSheet: View {
         FocusEntry(date: Date(), tracks: model.focusTracks, todaysSessions: model.todaysFocusSessions, active: model.activeFocus)
     }
 
+    private var combinedEntry: CombinedEntry {
+        CombinedEntry(date: Date(), tasks: model.tasks, tracks: model.focusTracks, todaysSessions: model.todaysFocusSessions, active: model.activeFocus)
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
@@ -403,6 +407,11 @@ private struct WidgetPreviewSheet: View {
                 Text("Focus — Medium").inkStamp(11).stampCase()
                 tile(width: 329, height: 155) {
                     FocusWidgetView(entry: focusEntry, forcedFamily: .systemMedium)
+                }
+
+                Text("Tasks & Focus — Medium").inkStamp(11).stampCase()
+                tile(width: 329, height: 155) {
+                    CombinedWidgetView(entry: combinedEntry)
                 }
 
                 Button("Close") { dismiss() }

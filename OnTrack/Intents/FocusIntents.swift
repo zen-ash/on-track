@@ -201,6 +201,7 @@ enum FocusIntentWriter {
 
     private static func reloadWidget() {
         WidgetCenter.shared.reloadTimelines(ofKind: WidgetKind.focus)
+        WidgetCenter.shared.reloadTimelines(ofKind: WidgetKind.combined) // same reasoning as AppModel's own combined reload — Siri's writes need to reach it too.
     }
 
     private static func spoken(_ seconds: Int) -> String {
