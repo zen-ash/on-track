@@ -110,6 +110,9 @@ struct RootView: View {
         .sheet(isPresented: routeBinding(for: .settings)) {
             SettingsView().presentationBackground(Ink.paper)
         }
+        .sheet(isPresented: routeBinding(for: .focus)) {
+            FocusView().presentationBackground(Ink.paper)
+        }
         #if DEBUG
         .sheet(isPresented: $model.isPreviewingWidget) {
             WidgetPreviewSheet()
@@ -168,6 +171,10 @@ private struct Masthead: View {
                     InkIconButton(systemName: "bubble.left.fill", seed: 102, accessibilityLabel: "Chat") {
                         InkHaptics.tick()
                         model.route = .chat
+                    }
+                    InkIconButton(systemName: "timer", seed: 104, accessibilityLabel: "Focus") {
+                        InkHaptics.tick()
+                        model.route = .focus
                     }
                     InkIconButton(systemName: "line.3.horizontal", seed: 103, accessibilityLabel: "Menu") {
                         InkHaptics.tick()

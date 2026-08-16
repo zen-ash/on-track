@@ -13,6 +13,7 @@ enum Route: Hashable {
     case chat
     case plan
     case settings
+    case focus
 }
 
 @MainActor
@@ -83,10 +84,22 @@ final class AppModel {
     /// survive a relaunch the way Trash does.
     private(set) var conflicts: [TaskConflict] = []
 
+    /// All tracks, archived included, and every session started today.
+    /// Loaded once in bootstrap() and kept current by whatever mutates them
+    /// — nothing else polls this the way `tasks` gets refreshed.
+    private(set) var focusTracks: [FocusTrack] = []
+    private(set) var todaysFocusSessions: [FocusSession] = []
+    /// Nil when nothing's running or paused. The one thing every part of the
+    /// Focus screen actually watches — see `ActiveFocusState` for how its
+    /// elapsed time survives a force-quit without any background execution.
+    private(set) var activeFocus: ActiveFocusState?
+
     // MARK: - Dependencies
 
     private let localStore = LocalTaskStore()
     private var remoteStore: SupabaseTaskStore?
+    private let localFocusStore = LocalFocusStore()
+    private var remoteFocusStore: SupabaseFocusStore?
     private let localAI = LocalCaptureParser()
     private var remoteAI: RemoteAIService?
     private let auth = SupabaseAuth()
@@ -132,6 +145,10 @@ final class AppModel {
         remoteStore ?? localStore
     }
 
+    private var focusStore: any FocusStore {
+        remoteFocusStore ?? localFocusStore
+    }
+
     /// The model that answers right now. Falls back to on-device when there's no
     /// backend or no session.
     var ai: any AIService {
@@ -152,6 +169,7 @@ final class AppModel {
         }
         await refresh()
         await refreshCalendarAccessState()
+        await loadFocus()
         startWatchingConnectivity()
         startWatchingCalendarChanges()
         // Fire-and-forget: nothing on screen waits for this, and the Trash
@@ -175,6 +193,7 @@ final class AppModel {
         self.session = session
         self.remoteStore = SupabaseTaskStore(auth: auth)
         self.remoteAI = RemoteAIService(auth: auth)
+        self.remoteFocusStore = SupabaseFocusStore(auth: auth)
     }
 
     func signInWithApple(idToken: String, nonce: String, fullName: String?) async {
@@ -202,6 +221,10 @@ final class AppModel {
     }
 
     func signOut() async {
+        // A session mid-flight would otherwise just vanish — finalise it
+        // against the account that's still signed in, before switching away.
+        if activeFocus != nil { await stopFocus() }
+
         // Send anything still queued while we can still authenticate as this user.
         await flushPending()
         await pending.clearAll()
@@ -210,13 +233,16 @@ final class AppModel {
         session = nil
         remoteStore = nil
         remoteAI = nil
+        remoteFocusStore = nil
         plan = nil
         chatHistory = []
 
         // The local store is now a mirror of the signed-in user's list, so it
         // has to be cleared — otherwise their tasks reappear in local mode.
         try? await localStore.replaceAll([])
+        try? await localFocusStore.replaceAll(tracks: [], sessions: [])
         await refresh()
+        await loadFocus()
     }
 
     /// Permanently deletes the account and every task on the server, then wipes
@@ -229,6 +255,9 @@ final class AppModel {
         isDeletingAccount = true
         defer { isDeletingAccount = false }
 
+        // Finalise before the account it would write to stops existing.
+        if activeFocus != nil { await stopFocus() }
+
         do {
             try await accountService.deleteAccount()
         } catch {
@@ -239,14 +268,18 @@ final class AppModel {
         // Server side is gone; now remove everything held on the device.
         await pending.clearAll()
         try? await localStore.replaceAll([])
+        try? await localFocusStore.replaceAll(tracks: [], sessions: [])
         await auth.signOut()
 
         session = nil
         remoteStore = nil
         remoteAI = nil
+        remoteFocusStore = nil
         plan = nil
         chatHistory = []
         tasks = []
+        focusTracks = []
+        todaysFocusSessions = []
         selectedTask = nil
         await notifyDataChanged()
 
@@ -875,6 +908,136 @@ final class AppModel {
             // tracking rather than being flagged against later.
             myLastWrites[item.id] = item
         }
+    }
+
+    // MARK: - Focus
+
+    /// Loads today's tracks and sessions, and restores whatever session was
+    /// left running or paused — a force-quit mid-session doesn't lose it,
+    /// since `ActiveFocusState` was already surviving that on its own.
+    func loadFocus() async {
+        let startOfToday = Calendar.current.startOfDay(for: Date())
+        do {
+            let loadedTracks = try await focusStore.loadTracks()
+            let loadedSessions = try await focusStore.loadSessions(since: startOfToday)
+            if remoteFocusStore != nil {
+                try? await localFocusStore.replaceAll(tracks: loadedTracks, sessions: loadedSessions)
+            }
+            focusTracks = loadedTracks
+            todaysFocusSessions = loadedSessions
+        } catch {
+            // Offline. Read the local mirror rather than showing an empty
+            // tracker — reading is the one thing that shouldn't need a network.
+            guard remoteFocusStore != nil else { return }
+            focusTracks = (try? await localFocusStore.loadTracks()) ?? focusTracks
+            todaysFocusSessions = (try? await localFocusStore.loadSessions(since: startOfToday)) ?? todaysFocusSessions
+        }
+        activeFocus = ActiveFocusRecovery.load()
+    }
+
+    /// Per-track total for today, including whatever's live in `activeFocus`
+    /// — takes `now` explicitly rather than reading `Date()` itself, so the
+    /// view's own ticking `TimelineView` is what decides when this is
+    /// re-evaluated, not a hidden clock inside the model.
+    func focusTotalSeconds(for track: FocusTrack, at now: Date = Date()) -> Int {
+        let logged = todaysFocusSessions
+            .filter { $0.trackId == track.id }
+            .reduce(0) { $0 + $1.accumulatedSeconds }
+        guard let activeFocus, activeFocus.trackId == track.id else { return logged }
+        return logged + activeFocus.elapsedSeconds(at: now)
+    }
+
+    /// Starting a different track while one's already running or paused
+    /// finalises the current one first, rather than leaving it stranded —
+    /// there's no such thing as two active tracks at once.
+    func startFocus(_ track: FocusTrack) async {
+        guard activeFocus?.trackId != track.id else { return } // already the active track
+        if activeFocus != nil {
+            await stopFocus()
+        }
+        let now = Date()
+        let state = ActiveFocusState(sessionId: UUID(), trackId: track.id, startedAt: now, accumulatedSeconds: 0, runningSince: now)
+        activeFocus = state
+        ActiveFocusRecovery.save(state)
+        InkHaptics.tick()
+    }
+
+    func pauseFocus() {
+        guard var state = activeFocus, let runningSince = state.runningSince else { return }
+        state.accumulatedSeconds += max(0, Int(Date().timeIntervalSince(runningSince)))
+        state.runningSince = nil
+        activeFocus = state
+        ActiveFocusRecovery.save(state)
+        InkHaptics.tick()
+    }
+
+    func resumeFocus() {
+        guard var state = activeFocus, state.runningSince == nil else { return }
+        state.runningSince = Date()
+        activeFocus = state
+        ActiveFocusRecovery.save(state)
+        InkHaptics.tick()
+    }
+
+    /// Finalises whatever's running or paused into a real `FocusSession`.
+    /// `ActiveFocusState` is the only thing that ever represented an
+    /// in-progress session, so once this writes, the clock stops and it
+    /// becomes ordinary persisted data like everything else.
+    func stopFocus() async {
+        guard var state = activeFocus else { return }
+        if let runningSince = state.runningSince {
+            state.accumulatedSeconds += max(0, Int(Date().timeIntervalSince(runningSince)))
+            state.runningSince = nil
+        }
+        activeFocus = nil
+        ActiveFocusRecovery.clear()
+
+        // A start immediately followed by stop logs nothing worth keeping.
+        guard state.accumulatedSeconds > 0 else { return }
+
+        let session = FocusSession(
+            id: state.sessionId,
+            userId: session?.userId,
+            trackId: state.trackId,
+            startedAt: state.startedAt,
+            endedAt: Date(),
+            accumulatedSeconds: state.accumulatedSeconds
+        )
+        todaysFocusSessions.append(session)
+        InkHaptics.done()
+        // Best-effort, same as the rest of Focus — no offline retry queue
+        // yet, unlike tasks. The session already lives in
+        // todaysFocusSessions either way, so nothing on screen is lost.
+        try? await focusStore.upsertSessions([session])
+    }
+
+    func addFocusTrack(name: String) async {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let nextIndex = (focusTracks.map(\.sortIndex).max() ?? 0) + 1
+        let track = FocusTrack(userId: session?.userId, name: trimmed, sortIndex: nextIndex)
+        focusTracks.append(track)
+        try? await focusStore.upsertTracks([track])
+    }
+
+    func renameFocusTrack(_ track: FocusTrack, to newName: String) async {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let index = focusTracks.firstIndex(where: { $0.id == track.id }) else { return }
+        focusTracks[index].name = trimmed
+        focusTracks[index].updatedAt = Date()
+        try? await focusStore.upsertTracks([focusTracks[index]])
+    }
+
+    /// Archived, not deleted — today's totals and any session already
+    /// logged against it still need a real name to show.
+    func archiveFocusTrack(_ track: FocusTrack) async {
+        guard let index = focusTracks.firstIndex(where: { $0.id == track.id }) else { return }
+        focusTracks[index].archivedAt = Date()
+        focusTracks[index].updatedAt = Date()
+        if activeFocus?.trackId == track.id {
+            await stopFocus()
+        }
+        try? await focusStore.upsertTracks([focusTracks[index]])
     }
 
     // MARK: - AI
