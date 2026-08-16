@@ -42,9 +42,13 @@ struct OnTrackApp: App {
                 .onReceive(NotificationCenter.default.publisher(for: QuickCaptureBus.didRequestCapture)) { _ in
                     model.openQuickCapture(startListening: true)
                 }
-                // A background intent wrote straight to the store; pick up the change.
+                // A background intent wrote straight to the store — a task,
+                // or now a Focus start/pause/stop — pick up the change.
                 .onReceive(NotificationCenter.default.publisher(for: QuickCaptureBus.didChange)) { _ in
-                    Task { await model.refresh() }
+                    Task {
+                        await model.refresh()
+                        await model.loadFocus()
+                    }
                 }
                 .onChange(of: scenePhase) { _, phase in
                     guard phase == .active else { return }

@@ -1,9 +1,12 @@
 import Foundation
 
 /// Crash/backgrounding-safe record of whatever Focus session is currently in
-/// progress. Deliberately device-local — UserDefaults, not synced through
-/// `FocusStore` — since a session started on this phone shouldn't try to
-/// "resume" itself on another device.
+/// progress. Lives in the App Group's shared UserDefaults suite, not just
+/// `.standard` — the app, the Siri intents, and the widget extension all
+/// read and write this exact record, so whichever one touched it last is
+/// what's true the next time any of them looks. Still device-local in
+/// spirit: a session started on this phone was never meant to "resume"
+/// itself on another device, and nothing here syncs through `FocusStore`.
 ///
 /// Elapsed time is never held in a running counter: it's always
 /// `accumulatedSeconds + (now - runningSince)`, computed on demand, so a
@@ -29,17 +32,25 @@ struct ActiveFocusState: Codable, Equatable, Sendable {
 enum ActiveFocusRecovery {
     private static let key = "activeFocusState"
 
+    /// Falls back to `.standard` only if the App Group suite is somehow
+    /// unreachable (entitlements not yet provisioned) — the same
+    /// "degrade, don't crash" posture `WidgetSnapshotStore` takes when its
+    /// container isn't reachable, just for UserDefaults instead of a file.
+    private static var defaults: UserDefaults {
+        UserDefaults(suiteName: AppGroup.identifier) ?? .standard
+    }
+
     static func save(_ state: ActiveFocusState) {
         guard let data = try? JSONCoding.encoder.encode(state) else { return }
-        UserDefaults.standard.set(data, forKey: key)
+        defaults.set(data, forKey: key)
     }
 
     static func load() -> ActiveFocusState? {
-        guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
+        guard let data = defaults.data(forKey: key) else { return nil }
         return try? JSONCoding.decoder.decode(ActiveFocusState.self, from: data)
     }
 
     static func clear() {
-        UserDefaults.standard.removeObject(forKey: key)
+        defaults.removeObject(forKey: key)
     }
 }

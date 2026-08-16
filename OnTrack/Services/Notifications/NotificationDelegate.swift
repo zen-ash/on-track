@@ -15,6 +15,9 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
     static let doneActionIdentifier = "TASK_DONE"
     static let snoozeActionIdentifier = "TASK_SNOOZE"
 
+    static let focusNudgeCategoryIdentifier = "FOCUS_NUDGE"
+    static let focusStopActionIdentifier = "FOCUS_STOP"
+
     /// Without this, a due-task notification is silently swallowed while the
     /// app is already open — UNUserNotificationCenter only shows one in the
     /// foreground if the delegate explicitly asks it to.
@@ -25,16 +28,27 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
         [.banner, .list, .sound]
     }
 
-    /// Handles a plain tap and both custom actions the same way: figure out
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        switch response.notification.request.content.categoryIdentifier {
+        case Self.categoryIdentifier:
+            handleTaskAction(response)
+        case Self.focusNudgeCategoryIdentifier:
+            await handleFocusNudgeAction(response)
+        default:
+            break
+        }
+    }
+
+    /// A plain tap and both custom actions handled the same way: figure out
     /// which task and what was asked for, stash it, and let it foreground —
     /// both actions are declared `.foreground` on purpose, so the real
     /// mutation always goes through AppModel's normal methods (toggleDone,
     /// snooze) instead of a second, easily-drifting copy of that logic
     /// running headless in the background.
-    func userNotificationCenter(
-        _ center: UNUserNotificationCenter,
-        didReceive response: UNNotificationResponse
-    ) async {
+    private func handleTaskAction(_ response: UNNotificationResponse) {
         guard let idString = response.notification.request.content.userInfo["taskId"] as? String,
               let taskId = UUID(uuidString: idString) else { return }
 
@@ -47,20 +61,44 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
         PendingNotificationAction.stash(taskId: taskId, kind: kind)
     }
 
+    /// Unlike the task actions, Stop here runs immediately and headlessly —
+    /// FocusIntentWriter.stop() is already a fully standalone, no-AppModel-
+    /// needed operation (that's the whole point of it existing for Siri), so
+    /// there's nothing to gain by bringing the app to the foreground first.
+    /// A plain tap does nothing beyond the system default open; deep-linking
+    /// straight to the Focus tab from here is a reasonable follow-on, not
+    /// done in this pass.
+    private func handleFocusNudgeAction(_ response: UNNotificationResponse) async {
+        guard response.actionIdentifier == Self.focusStopActionIdentifier else { return }
+        _ = await FocusIntentWriter.stop()
+    }
+
     /// Registering is cheap and idempotent, so `Reminders.sync` just calls
     /// this every time rather than gating it behind first-launch state — an
     /// account that already granted permission in an earlier version of the
-    /// app, before this existed, still needs it to run.
+    /// app, before this existed, still needs it to run. Both categories are
+    /// registered in the one call `setNotificationCategories` allows —
+    /// calling it a second time from somewhere else would silently replace
+    /// the first registration rather than add to it.
     static func registerCategories() {
         let done = UNNotificationAction(identifier: doneActionIdentifier, title: "Done", options: [.foreground])
         let snooze = UNNotificationAction(identifier: snoozeActionIdentifier, title: "Snooze 1 hour", options: [.foreground])
-        let category = UNNotificationCategory(
+        let taskDue = UNNotificationCategory(
             identifier: categoryIdentifier,
             actions: [done, snooze],
             intentIdentifiers: [],
             options: []
         )
-        UNUserNotificationCenter.current().setNotificationCategories([category])
+
+        let stop = UNNotificationAction(identifier: focusStopActionIdentifier, title: "Stop", options: [.destructive])
+        let focusNudge = UNNotificationCategory(
+            identifier: focusNudgeCategoryIdentifier,
+            actions: [stop],
+            intentIdentifiers: [],
+            options: []
+        )
+
+        UNUserNotificationCenter.current().setNotificationCategories([taskDue, focusNudge])
     }
 }
 

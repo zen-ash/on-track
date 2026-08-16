@@ -9,6 +9,11 @@ struct FocusView: View {
 
     @State private var newTrackName = ""
     @State private var pendingArchive: FocusTrack?
+    @State private var historyRange: HistoryRange = .today
+
+    private enum HistoryRange: Hashable {
+        case today, week
+    }
 
     private var activeTracks: [FocusTrack] {
         model.focusTracks.filter { !$0.isArchived }.sorted { $0.sortIndex < $1.sortIndex }
@@ -28,7 +33,7 @@ struct FocusView: View {
                         runningCard(track: track, state: active)
                     }
                     trackPicker
-                    todaySection
+                    historySection
                 }
                 .padding(.horizontal, 22)
                 .padding(.vertical, 18)
@@ -98,8 +103,9 @@ struct FocusView: View {
 
                 HStack(spacing: 12) {
                     Button {
-                        InkHaptics.tick()
-                        if state.isPaused { model.resumeFocus() } else { model.pauseFocus() }
+                        Task {
+                            if state.isPaused { await model.resumeFocus() } else { await model.pauseFocus() }
+                        }
                     } label: {
                         Text(state.isPaused ? "Resume" : "Pause").frame(maxWidth: .infinity)
                     }
@@ -200,18 +206,93 @@ struct FocusView: View {
         Task { await model.addFocusTrack(name: name) }
     }
 
-    // MARK: - Today
+    // MARK: - History (Today / This Week)
 
-    private var todaySection: some View {
+    private var historySection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionRule(title: "Today", seed: 1630)
+            SectionRule(title: historyRange == .today ? "Today" : "This Week", seed: 1630)
+            historyRangePicker
 
-            // Ticks with the running card so a total updates live rather
-            // than only once you hit Stop.
+            // One shared ticker for both ranges — the only thing that
+            // changes live either way is the currently-running session's
+            // own contribution, whether it lands in today's total, one
+            // day's total, or its track's weekly total.
             TimelineView(.periodic(from: .now, by: 1)) { context in
-                let totals = todaysTotals(at: context.date)
+                switch historyRange {
+                case .today:
+                    todayTotals(at: context.date)
+                case .week:
+                    weekContent(at: context.date)
+                }
+            }
+        }
+    }
+
+    private var historyRangePicker: some View {
+        HStack(spacing: 8) {
+            historyRangeButton(.today, label: "Today", seed: 1631)
+            historyRangeButton(.week, label: "This Week", seed: 1632)
+        }
+    }
+
+    private func historyRangeButton(_ range: HistoryRange, label: String, seed: UInt64) -> some View {
+        let isSelected = historyRange == range
+        return Button {
+            InkHaptics.tick()
+            historyRange = range
+        } label: {
+            Text(label)
+                .inkStamp(11)
+                .stampCase()
+                .foregroundStyle(isSelected ? Ink.paper : Ink.ink)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .background {
+                    if isSelected {
+                        RoughRect(seed: seed, wobble: 1.5, corner: 4).fill(Ink.ink)
+                    } else {
+                        RoughRect(seed: seed, wobble: 1.5, corner: 4)
+                            .stroke(Ink.ink.opacity(0.4), lineWidth: 1.3)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    @ViewBuilder
+    private func todayTotals(at now: Date) -> some View {
+        let totals = trackTotals(at: now, seconds: model.focusTotalSeconds)
+        if totals.isEmpty {
+            Text("Nothing logged yet today.")
+                .inkBodySmall()
+                .foregroundStyle(Ink.inkSoft)
+        } else {
+            VStack(spacing: 8) {
+                ForEach(totals, id: \.track.id) { entry in
+                    totalRow(entry.track, seconds: entry.seconds)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func weekContent(at now: Date) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("By day").inkBodySmall().foregroundStyle(Ink.inkSoft)
+                VStack(spacing: 6) {
+                    ForEach(model.focusSecondsByDay(at: now), id: \.day) { entry in
+                        dayRow(entry.day, seconds: entry.seconds)
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("By track").inkBodySmall().foregroundStyle(Ink.inkSoft)
+                let totals = trackTotals(at: now, seconds: model.weeklyFocusTotalSeconds)
                 if totals.isEmpty {
-                    Text("Nothing logged yet today.")
+                    Text("Nothing logged this week.")
                         .inkBodySmall()
                         .foregroundStyle(Ink.inkSoft)
                 } else {
@@ -225,11 +306,44 @@ struct FocusView: View {
         }
     }
 
-    private func todaysTotals(at now: Date) -> [(track: FocusTrack, seconds: Int)] {
+    private func trackTotals(at now: Date, seconds: (FocusTrack, Date) -> Int) -> [(track: FocusTrack, seconds: Int)] {
         model.focusTracks
-            .map { ($0, model.focusTotalSeconds(for: $0, at: now)) }
+            .map { ($0, seconds($0, now)) }
             .filter { $0.1 > 0 }
             .sorted { $0.1 > $1.1 }
+    }
+
+    /// A day with nothing logged still gets a row, faint rather than
+    /// omitted — "nothing on Sunday" is itself worth seeing across a week,
+    /// unlike the today/by-track lists where a zero would just be noise.
+    private func dayRow(_ day: Date, seconds: Int) -> some View {
+        let isEmpty = seconds == 0
+        return HStack {
+            Text(Self.dayLabel(day))
+                .inkBody()
+                .foregroundStyle(isEmpty ? Ink.inkFaint : Ink.ink)
+            Spacer()
+            Text(isEmpty ? "—" : Self.clockFormat(seconds))
+                .inkStamp(11)
+                .foregroundStyle(Ink.inkSoft)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background {
+            RoughRect(seed: Self.dayLabel(day).inkSeed, wobble: 1.4, corner: 4)
+                .stroke(Ink.ink.opacity(isEmpty ? 0.1 : 0.18), lineWidth: 1.2)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(isEmpty ? "\(Self.dayLabel(day)): nothing logged" : "\(Self.dayLabel(day)): \(Self.spokenDuration(seconds))")
+    }
+
+    private static func dayLabel(_ day: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(day) { return "Today" }
+        if calendar.isDateInYesterday(day) { return "Yesterday" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEEE"
+        return formatter.string(from: day)
     }
 
     private func totalRow(_ track: FocusTrack, seconds: Int) -> some View {

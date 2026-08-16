@@ -13,6 +13,11 @@ enum Route: Hashable {
     case chat
     case plan
     case settings
+    /// Not a sheet — Focus is a tab now, not a route with a `.sheet` of its
+    /// own. This exists purely so a deep link (the Focus widget's tap
+    /// target) has something to ask for; RootView consumes it into
+    /// `selectedTab` and resets it immediately.
+    case focus
 }
 
 @MainActor
@@ -83,11 +88,20 @@ final class AppModel {
     /// survive a relaunch the way Trash does.
     private(set) var conflicts: [TaskConflict] = []
 
-    /// All tracks, archived included, and every session started today.
-    /// Loaded once in bootstrap() and kept current by whatever mutates them
-    /// — nothing else polls this the way `tasks` gets refreshed.
+    /// All tracks, archived included, and every session started in the last
+    /// 7 days (today included) — a superset of what "Today" needs, wide
+    /// enough for "This Week" too without a second store round trip. Loaded
+    /// once in bootstrap() and kept current by whatever mutates it —
+    /// nothing else polls this the way `tasks` gets refreshed.
     private(set) var focusTracks: [FocusTrack] = []
-    private(set) var todaysFocusSessions: [FocusSession] = []
+    private(set) var recentFocusSessions: [FocusSession] = []
+
+    /// Just today's slice of `recentFocusSessions` — computed, not stored,
+    /// so there's exactly one array that can ever drift out of date.
+    var todaysFocusSessions: [FocusSession] {
+        let startOfToday = Calendar.current.startOfDay(for: Date())
+        return recentFocusSessions.filter { $0.startedAt >= startOfToday }
+    }
     /// Nil when nothing's running or paused. The one thing every part of the
     /// Focus screen actually watches — see `ActiveFocusState` for how its
     /// elapsed time survives a force-quit without any background execution.
@@ -278,7 +292,7 @@ final class AppModel {
         chatHistory = []
         tasks = []
         focusTracks = []
-        todaysFocusSessions = []
+        recentFocusSessions = []
         selectedTask = nil
         await notifyDataChanged()
 
@@ -911,27 +925,68 @@ final class AppModel {
 
     // MARK: - Focus
 
-    /// Loads today's tracks and sessions, and restores whatever session was
-    /// left running or paused — a force-quit mid-session doesn't lose it,
-    /// since `ActiveFocusState` was already surviving that on its own.
-    func loadFocus() async {
+    /// How far back "This Week" looks — today plus the 6 days before it.
+    private static let focusHistoryDays = 7
+
+    private static var focusHistoryStart: Date {
         let startOfToday = Calendar.current.startOfDay(for: Date())
+        return Calendar.current.date(byAdding: .day, value: -(focusHistoryDays - 1), to: startOfToday) ?? startOfToday
+    }
+
+    /// Loads tracks and the last 7 days of sessions, and restores whatever
+    /// session was left running or paused — a force-quit mid-session
+    /// doesn't lose it, since `ActiveFocusState` was already surviving that
+    /// on its own.
+    func loadFocus() async {
+        let historyStart = Self.focusHistoryStart
         do {
             let loadedTracks = try await focusStore.loadTracks()
-            let loadedSessions = try await focusStore.loadSessions(since: startOfToday)
+            let loadedSessions = try await focusStore.loadSessions(since: historyStart)
             if remoteFocusStore != nil {
                 try? await localFocusStore.replaceAll(tracks: loadedTracks, sessions: loadedSessions)
             }
             focusTracks = loadedTracks
-            todaysFocusSessions = loadedSessions
+            recentFocusSessions = loadedSessions
         } catch {
             // Offline. Read the local mirror rather than showing an empty
             // tracker — reading is the one thing that shouldn't need a network.
             guard remoteFocusStore != nil else { return }
             focusTracks = (try? await localFocusStore.loadTracks()) ?? focusTracks
-            todaysFocusSessions = (try? await localFocusStore.loadSessions(since: startOfToday)) ?? todaysFocusSessions
+            recentFocusSessions = (try? await localFocusStore.loadSessions(since: historyStart)) ?? recentFocusSessions
         }
         activeFocus = ActiveFocusRecovery.load()
+        notifyFocusDataChanged()
+
+        // Re-arms the nudge on relaunch for a restored, still-running
+        // session — belt and suspenders alongside the notification already
+        // surviving on its own: covers a reinstall, or permission only
+        // having been granted after the session was already started.
+        if let activeFocus, let runningSince = activeFocus.runningSince {
+            let trackName = focusTracks.first(where: { $0.id == activeFocus.trackId })?.name ?? "Focus"
+            await FocusNudgeScheduler.schedule(trackName: trackName, runningSince: runningSince)
+        }
+
+        // Same belt-and-suspenders reasoning as the nudge above, for the
+        // Live Activity: a relaunch with a still-running session but no
+        // activity attached (this feature shipping mid-session, or the
+        // system reclaiming it) shouldn't leave the Lock Screen silent for
+        // the rest of that session.
+        if let activeFocus {
+            let trackName = focusTracks.first(where: { $0.id == activeFocus.trackId })?.name ?? "Focus"
+            await FocusLiveActivityController.reattachIfNeeded(trackName: trackName, state: activeFocus)
+        }
+    }
+
+    /// The Focus counterpart to `notifyDataChanged()`. `ActiveFocusState`
+    /// itself needs no snapshot — it already lives in the App Group's shared
+    /// UserDefaults suite, which the widget reads directly — but today's
+    /// totals live in `focusTracks`/`recentFocusSessions`, which the widget
+    /// can only see through a file the same way it sees tasks. Called from
+    /// every Focus mutator, even the ones that only touch `activeFocus`,
+    /// since a reload is what actually makes the widget notice.
+    private func notifyFocusDataChanged() {
+        FocusWidgetSnapshotStore.write(tracks: focusTracks, todaysSessions: todaysFocusSessions)
+        WidgetCenter.shared.reloadTimelines(ofKind: WidgetKind.focus)
     }
 
     /// Per-track total for today, including whatever's live in `activeFocus`
@@ -946,11 +1001,58 @@ final class AppModel {
         return logged + activeFocus.elapsedSeconds(at: now)
     }
 
+    /// Same shape as `focusTotalSeconds`, over the wider `recentFocusSessions`
+    /// window instead of just today — "which track do I actually spend the
+    /// most time on" is this question, asked over a week instead of a day.
+    func weeklyFocusTotalSeconds(for track: FocusTrack, at now: Date = Date()) -> Int {
+        let logged = recentFocusSessions
+            .filter { $0.trackId == track.id }
+            .reduce(0) { $0 + $1.accumulatedSeconds }
+        guard let activeFocus, activeFocus.trackId == track.id else { return logged }
+        return logged + activeFocus.elapsedSeconds(at: now)
+    }
+
+    /// Total across every track for each of the last 7 days, today first —
+    /// "how much did I actually do yesterday" at a glance, not just a
+    /// per-track breakdown.
+    func focusSecondsByDay(at now: Date = Date()) -> [(day: Date, seconds: Int)] {
+        let calendar = Calendar.current
+        let startOfToday = calendar.startOfDay(for: now)
+        let days = (0..<Self.focusHistoryDays).compactMap {
+            calendar.date(byAdding: .day, value: -$0, to: startOfToday)
+        }
+        return days.map { day in
+            let dayEnd = calendar.date(byAdding: .day, value: 1, to: day) ?? day.addingTimeInterval(86400)
+            var seconds = recentFocusSessions
+                .filter { $0.startedAt >= day && $0.startedAt < dayEnd }
+                .reduce(0) { $0 + $1.accumulatedSeconds }
+            if calendar.isDate(day, inSameDayAs: now), let activeFocus {
+                seconds += activeFocus.elapsedSeconds(at: now)
+            }
+            return (day, seconds)
+        }
+    }
+
     /// Starting a different track while one's already running or paused
     /// finalises the current one first, rather than leaving it stranded —
     /// there's no such thing as two active tracks at once.
     func startFocus(_ track: FocusTrack) async {
-        guard activeFocus?.trackId != track.id else { return } // already the active track
+        // The chip for the active track is disabled in the UI, so this
+        // in-app path never actually hits the resume case today — but
+        // StartFocusIntent (Siri) shares this same "start" verb and does
+        // need it, so the behaviour lives here once rather than twice.
+        if var current = activeFocus, current.trackId == track.id {
+            guard current.isPaused else { return } // already running this one
+            let now = Date()
+            current.runningSince = now
+            activeFocus = current
+            ActiveFocusRecovery.save(current)
+            InkHaptics.tick()
+            notifyFocusDataChanged()
+            await FocusNudgeScheduler.schedule(trackName: track.name, runningSince: now)
+            await FocusLiveActivityController.update(state: current)
+            return
+        }
         if activeFocus != nil {
             await stopFocus()
         }
@@ -959,23 +1061,34 @@ final class AppModel {
         activeFocus = state
         ActiveFocusRecovery.save(state)
         InkHaptics.tick()
+        notifyFocusDataChanged()
+        await FocusNudgeScheduler.schedule(trackName: track.name, runningSince: now)
+        await FocusLiveActivityController.start(trackName: track.name, state: state)
     }
 
-    func pauseFocus() {
+    func pauseFocus() async {
         guard var state = activeFocus, let runningSince = state.runningSince else { return }
         state.accumulatedSeconds += max(0, Int(Date().timeIntervalSince(runningSince)))
         state.runningSince = nil
         activeFocus = state
         ActiveFocusRecovery.save(state)
         InkHaptics.tick()
+        notifyFocusDataChanged()
+        FocusNudgeScheduler.cancel() // paused is clearly still-attended, nothing to nudge about
+        await FocusLiveActivityController.update(state: state)
     }
 
-    func resumeFocus() {
+    func resumeFocus() async {
         guard var state = activeFocus, state.runningSince == nil else { return }
-        state.runningSince = Date()
+        let now = Date()
+        state.runningSince = now
         activeFocus = state
         ActiveFocusRecovery.save(state)
         InkHaptics.tick()
+        notifyFocusDataChanged()
+        let trackName = focusTracks.first(where: { $0.id == state.trackId })?.name ?? "Focus"
+        await FocusNudgeScheduler.schedule(trackName: trackName, runningSince: now)
+        await FocusLiveActivityController.update(state: state)
     }
 
     /// Finalises whatever's running or paused into a real `FocusSession`.
@@ -990,6 +1103,8 @@ final class AppModel {
         }
         activeFocus = nil
         ActiveFocusRecovery.clear()
+        FocusNudgeScheduler.cancel()
+        await FocusLiveActivityController.end()
 
         // A start immediately followed by stop logs nothing worth keeping.
         guard state.accumulatedSeconds > 0 else { return }
@@ -1002,11 +1117,12 @@ final class AppModel {
             endedAt: Date(),
             accumulatedSeconds: state.accumulatedSeconds
         )
-        todaysFocusSessions.append(session)
+        recentFocusSessions.append(session)
         InkHaptics.done()
+        notifyFocusDataChanged()
         // Best-effort, same as the rest of Focus — no offline retry queue
         // yet, unlike tasks. The session already lives in
-        // todaysFocusSessions either way, so nothing on screen is lost.
+        // recentFocusSessions either way, so nothing on screen is lost.
         try? await focusStore.upsertSessions([session])
     }
 
@@ -1016,6 +1132,7 @@ final class AppModel {
         let nextIndex = (focusTracks.map(\.sortIndex).max() ?? 0) + 1
         let track = FocusTrack(userId: session?.userId, name: trimmed, sortIndex: nextIndex)
         focusTracks.append(track)
+        notifyFocusDataChanged()
         try? await focusStore.upsertTracks([track])
     }
 
@@ -1024,6 +1141,7 @@ final class AppModel {
         guard !trimmed.isEmpty, let index = focusTracks.firstIndex(where: { $0.id == track.id }) else { return }
         focusTracks[index].name = trimmed
         focusTracks[index].updatedAt = Date()
+        notifyFocusDataChanged()
         try? await focusStore.upsertTracks([focusTracks[index]])
     }
 
@@ -1036,6 +1154,7 @@ final class AppModel {
         if activeFocus?.trackId == track.id {
             await stopFocus()
         }
+        notifyFocusDataChanged()
         try? await focusStore.upsertTracks([focusTracks[index]])
     }
 
@@ -1235,6 +1354,9 @@ final class AppModel {
             // already the default screen, but naming the route explicitly
             // means that stays true even if the default ever changes.
             route = .today
+        case "focus":
+            // The Focus widget's tap target.
+            route = .focus
         default:
             break
         }

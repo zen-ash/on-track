@@ -42,7 +42,7 @@
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Speech is turned into text on your device, so what you say becomes a real task.</string>
 	<key>NSSupportsLiveActivities</key>
-	<false/>
+	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchScreen</key>

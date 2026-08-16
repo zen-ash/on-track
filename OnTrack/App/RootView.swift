@@ -40,6 +40,14 @@ struct RootView: View {
 
                 TabBar(selected: $selectedTab)
             }
+            // The Focus widget's tap target: a deep link has no tab of its
+            // own to land on, so it asks via `route` the same way it would
+            // ask for a sheet, and this is what actually acts on it.
+            .onChange(of: model.route) { _, newValue in
+                guard newValue == .focus else { return }
+                selectedTab = .focus
+                model.route = .today
+            }
 
             if let banner = model.banner {
                 BannerView(message: banner)
@@ -370,17 +378,31 @@ private struct WidgetPreviewSheet: View {
         TodayEntry(date: Date(), tasks: model.tasks)
     }
 
+    private var focusEntry: FocusEntry {
+        FocusEntry(date: Date(), tracks: model.focusTracks, todaysSessions: model.todaysFocusSessions, active: model.activeFocus)
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
-                Text("Small").inkStamp(11).stampCase()
+                Text("Today — Small").inkStamp(11).stampCase()
                 tile(width: 155, height: 155) {
                     TodayWidgetView(entry: entry, forcedFamily: .systemSmall)
                 }
 
-                Text("Medium").inkStamp(11).stampCase()
+                Text("Today — Medium").inkStamp(11).stampCase()
                 tile(width: 329, height: 155) {
                     TodayWidgetView(entry: entry, forcedFamily: .systemMedium)
+                }
+
+                Text("Focus — Small").inkStamp(11).stampCase()
+                tile(width: 155, height: 155) {
+                    FocusWidgetView(entry: focusEntry, forcedFamily: .systemSmall)
+                }
+
+                Text("Focus — Medium").inkStamp(11).stampCase()
+                tile(width: 329, height: 155) {
+                    FocusWidgetView(entry: focusEntry, forcedFamily: .systemMedium)
                 }
 
                 Button("Close") { dismiss() }

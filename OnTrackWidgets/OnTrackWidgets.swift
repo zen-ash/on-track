@@ -10,6 +10,8 @@ struct OnTrackWidgetsBundle: WidgetBundle {
         QuickCaptureControl()
         QuickCaptureLockScreenWidget()
         TodayWidget()
+        FocusWidget()
+        FocusLiveActivity()
     }
 }
 

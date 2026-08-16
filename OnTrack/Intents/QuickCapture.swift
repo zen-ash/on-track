@@ -101,6 +101,34 @@ struct OnTrackShortcuts: AppShortcutsProvider {
             shortTitle: "What's overdue",
             systemImageName: "exclamationmark.triangle"
         )
+        AppShortcut(
+            intent: StartFocusIntent(),
+            phrases: [
+                "Start focusing on \(\.$track) in \(.applicationName)",
+                "Focus on \(\.$track) in \(.applicationName)"
+            ],
+            shortTitle: "Start Focus",
+            systemImageName: "timer"
+        )
+        AppShortcut(
+            intent: PauseFocusIntent(),
+            phrases: [
+                "Pause focus in \(.applicationName)",
+                "Pause focusing in \(.applicationName)"
+            ],
+            shortTitle: "Pause Focus",
+            systemImageName: "pause.circle"
+        )
+        AppShortcut(
+            intent: StopFocusIntent(),
+            phrases: [
+                "Stop focusing in \(.applicationName)",
+                "Stop focus in \(.applicationName)",
+                "End focus in \(.applicationName)"
+            ],
+            shortTitle: "Stop Focus",
+            systemImageName: "stop.circle"
+        )
     }
 }
 
