@@ -136,6 +136,7 @@ struct RootView: View {
 
 private struct Masthead: View {
     @Environment(AppModel.self) private var model
+    @State private var isShowingConflicts = false
 
     private var dateStamp: String {
         let formatter = DateFormatter()
@@ -175,6 +176,16 @@ private struct Masthead: View {
                 }
             }
 
+            // Lives here rather than tucked in Settings — a silently
+            // overwritten edit is exactly the kind of thing that shouldn't
+            // need a trip through a menu to notice.
+            if !model.conflicts.isEmpty {
+                ConflictBanner(count: model.conflicts.count) {
+                    InkHaptics.tick()
+                    isShowingConflicts = true
+                }
+            }
+
             if model.mood.isWorthShowing {
                 MascotBanner(mood: model.mood, line: model.moodLine)
             }
@@ -185,6 +196,50 @@ private struct Masthead: View {
         .padding(.top, 8)
         .padding(.bottom, 10)
         .animation(.spring(response: 0.45, dampingFraction: 0.8), value: model.mood)
+        .animation(.spring(response: 0.45, dampingFraction: 0.8), value: model.conflicts.count)
+        .sheet(isPresented: $isShowingConflicts) {
+            ConflictsView().presentationBackground(Ink.paper)
+        }
+    }
+}
+
+/// Tappable summary row — count and a chevron, not the conflicts themselves,
+/// since resolving one is a real decision (which version to keep) that
+/// deserves its own screen rather than being squeezed into the header.
+private struct ConflictBanner: View {
+    let count: Int
+    let action: () -> Void
+
+    private var message: String {
+        count == 1 ? "1 task changed on another device" : "\(count) tasks changed on another device"
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: "arrow.triangle.branch")
+                    .font(.system(size: 13, weight: .black))
+                    .foregroundStyle(Ink.alarm)
+                    .accessibilityHidden(true)
+                Text(message)
+                    .inkBodySmall()
+                    .foregroundStyle(Ink.ink)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .black))
+                    .foregroundStyle(Ink.inkFaint)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background {
+                RoughRect(seed: 105, wobble: 1.6, corner: 5)
+                    .stroke(Ink.alarm.opacity(0.6), lineWidth: 1.4)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(message)
+        .accessibilityHint("Opens the list to review and resolve them.")
     }
 }
 
