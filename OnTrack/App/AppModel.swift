@@ -13,7 +13,6 @@ enum Route: Hashable {
     case chat
     case plan
     case settings
-    case focus
 }
 
 @MainActor

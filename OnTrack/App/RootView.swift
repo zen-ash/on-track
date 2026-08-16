@@ -3,8 +3,19 @@ import SwiftUI
 import WidgetKit
 #endif
 
+/// The app's two persistent screens — what to do, and what you're actually
+/// doing right now. Plan/Chat/Settings stay reachable as sheets from the
+/// To-Do tab's header rather than getting tabs of their own: they're each a
+/// brief errand, not something you'd sit in for a while the way either of
+/// these two is.
+private enum MainTab: Hashable {
+    case today
+    case focus
+}
+
 struct RootView: View {
     @Environment(AppModel.self) private var model
+    @State private var selectedTab: MainTab = .today
 
     var body: some View {
         @Bindable var model = model
@@ -13,9 +24,21 @@ struct RootView: View {
             PaperBackground()
 
             VStack(spacing: 0) {
-                Masthead()
-                TodayView()
-                CaptureBar()
+                Group {
+                    switch selectedTab {
+                    case .today:
+                        VStack(spacing: 0) {
+                            Masthead()
+                            TodayView()
+                            CaptureBar()
+                        }
+                    case .focus:
+                        FocusView()
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                TabBar(selected: $selectedTab)
             }
 
             if let banner = model.banner {
@@ -110,9 +133,6 @@ struct RootView: View {
         .sheet(isPresented: routeBinding(for: .settings)) {
             SettingsView().presentationBackground(Ink.paper)
         }
-        .sheet(isPresented: routeBinding(for: .focus)) {
-            FocusView().presentationBackground(Ink.paper)
-        }
         #if DEBUG
         .sheet(isPresented: $model.isPreviewingWidget) {
             WidgetPreviewSheet()
@@ -132,6 +152,53 @@ struct RootView: View {
                 }
             }
         )
+    }
+}
+
+// MARK: - Tab bar
+
+/// Hand-drawn on purpose, not SwiftUI's native `TabView` — this app has no
+/// system chrome anywhere else (no navigation bars, no native search field),
+/// and a stock tab bar would be the one part of the screen that didn't look
+/// like it belonged to it.
+private struct TabBar: View {
+    @Binding var selected: MainTab
+
+    var body: some View {
+        VStack(spacing: 0) {
+            RoughDivider(seed: 70, opacity: 0.32)
+            HStack(spacing: 0) {
+                tabButton(.today, label: "To-Do", systemName: "checklist")
+                tabButton(.focus, label: "Timer", systemName: "timer")
+            }
+            .padding(.top, 8)
+            .padding(.bottom, 4)
+        }
+        .background(Ink.paper)
+    }
+
+    private func tabButton(_ tab: MainTab, label: String, systemName: String) -> some View {
+        let isSelected = selected == tab
+        return Button {
+            guard selected != tab else { return }
+            InkHaptics.tick()
+            selected = tab
+        } label: {
+            VStack(spacing: 4) {
+                Image(systemName: systemName)
+                    .font(.system(size: 18, weight: .black))
+                Text(label)
+                    .inkStamp(10)
+                    .stampCase()
+            }
+            .foregroundStyle(isSelected ? Ink.ink : Ink.inkFaint)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 }
 
@@ -171,10 +238,6 @@ private struct Masthead: View {
                     InkIconButton(systemName: "bubble.left.fill", seed: 102, accessibilityLabel: "Chat") {
                         InkHaptics.tick()
                         model.route = .chat
-                    }
-                    InkIconButton(systemName: "timer", seed: 104, accessibilityLabel: "Focus") {
-                        InkHaptics.tick()
-                        model.route = .focus
                     }
                     InkIconButton(systemName: "line.3.horizontal", seed: 103, accessibilityLabel: "Menu") {
                         InkHaptics.tick()
@@ -379,7 +442,10 @@ private struct UndoToastView: View {
                     .fill(Ink.ink)
             }
             .padding(.horizontal, 16)
-            .padding(.bottom, 86)
+            // 86 clears the capture bar alone; the tab bar underneath it
+            // now adds its own height below that on every screen, not just
+            // the To-Do tab, since this toast is a global overlay.
+            .padding(.bottom, 86 + 64)
         }
     }
 }

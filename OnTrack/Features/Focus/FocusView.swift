@@ -6,7 +6,6 @@ import SwiftUI
 /// are what's actually worth seeing at a glance.
 struct FocusView: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.dismiss) private var dismiss
 
     @State private var newTrackName = ""
     @State private var pendingArchive: FocusTrack?
@@ -16,26 +15,26 @@ struct FocusView: View {
     }
 
     var body: some View {
-        ZStack {
-            PaperBackground()
+        // Embedded directly in RootView's own tab content, not presented as
+        // a sheet, so there's no PaperBackground or close button here — the
+        // paper's already behind it, and there's nothing to dismiss.
+        VStack(spacing: 0) {
+            header
 
-            VStack(spacing: 0) {
-                header
-
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 22) {
-                        if let active = model.activeFocus,
-                           let track = model.focusTracks.first(where: { $0.id == active.trackId }) {
-                            runningCard(track: track, state: active)
-                        }
-                        trackPicker
-                        todaySection
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    if let active = model.activeFocus,
+                       let track = model.focusTracks.first(where: { $0.id == active.trackId }) {
+                        runningCard(track: track, state: active)
                     }
-                    .padding(.horizontal, 22)
-                    .padding(.vertical, 18)
+                    trackPicker
+                    todaySection
                 }
+                .padding(.horizontal, 22)
+                .padding(.vertical, 18)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .confirmationDialog(
             "Archive “\(pendingArchive?.name ?? "")”?",
             isPresented: Binding(
@@ -58,24 +57,20 @@ struct FocusView: View {
 
     private var header: some View {
         VStack(spacing: 10) {
-            HStack {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("Focus")
-                        .inkTitle(24)
-                        .posterCase(tracking: -0.8)
-                        .foregroundStyle(Ink.ink)
-                    Text("Where today actually went")
-                        .inkStamp(10)
-                        .stampCase()
-                        .foregroundStyle(Ink.inkSoft)
-                }
-                Spacer()
-                InkIconButton(systemName: "xmark", seed: 1601, accessibilityLabel: "Close") { dismiss() }
+            VStack(alignment: .leading, spacing: -2) {
+                Text("Focus")
+                    .inkDisplay(38)
+                    .posterCase(tracking: -1.6)
+                    .foregroundStyle(Ink.ink)
+                Text("Where today actually went")
+                    .inkStamp(10)
+                    .stampCase()
+                    .foregroundStyle(Ink.inkSoft)
             }
-            RoughDivider(seed: 1602, opacity: 0.3)
+            RoughDivider(seed: 1602, opacity: 0.35)
         }
-        .padding(.horizontal, 22)
-        .padding(.top, 18)
+        .padding(.horizontal, 20)
+        .padding(.top, 8)
         .padding(.bottom, 10)
     }
 
