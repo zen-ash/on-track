@@ -1,8 +1,13 @@
 import SwiftUI
+import UserNotifications
 
 @main
 struct OnTrackApp: App {
     @State private var model = AppModel()
+    /// Held here, not just assigned, since UNUserNotificationCenter keeps
+    /// only a weak reference to its delegate — nothing else in the app would
+    /// otherwise be keeping this one alive.
+    @State private var notificationDelegate = NotificationDelegate()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
@@ -11,8 +16,13 @@ struct OnTrackApp: App {
                 .environment(model)
                 .dynamicTypeSize(...DynamicTypeSize.inkMaxDynamicTypeSize)
                 .task {
+                    // As early as possible, before anything async — a cold
+                    // launch from tapping a notification needs a delegate
+                    // already in place to receive that response at all.
+                    UNUserNotificationCenter.current().delegate = notificationDelegate
                     await model.bootstrap()
                     consumePendingCapture()
+                    consumePendingNotificationAction()
 
                     #if DEBUG
                     // Jump straight to a screen for design work: -openCapture / -openTyping.
@@ -39,6 +49,7 @@ struct OnTrackApp: App {
                 .onChange(of: scenePhase) { _, phase in
                     guard phase == .active else { return }
                     consumePendingCapture()
+                    consumePendingNotificationAction()
                     Task { await model.refresh() }
                     // Calendar access can change from iOS Settings while
                     // backgrounded, so it's re-read on every foreground
@@ -58,6 +69,23 @@ struct OnTrackApp: App {
     private func consumePendingCapture() {
         if QuickCaptureBus.consumePendingRequest() {
             model.openQuickCapture(startListening: true)
+        }
+    }
+
+    /// Both call sites run after `model.tasks` is already populated —
+    /// `bootstrap()` is awaited first on cold launch, and a warm foreground
+    /// only reaches this after the task existed from before backgrounding —
+    /// so the lookup by id is expected to succeed rather than racing a load.
+    private func consumePendingNotificationAction() {
+        guard let pending = PendingNotificationAction.consume(),
+              let task = model.tasks.first(where: { $0.id == pending.taskId }) else { return }
+        switch pending.kind {
+        case .open:
+            model.selectedTask = task
+        case .markDone:
+            Task { await model.toggleDone(task) }
+        case .snooze:
+            Task { await model.snooze(task) }
         }
     }
 }

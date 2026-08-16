@@ -33,6 +33,10 @@ final class AppModel {
     var captureStartsListening = false
     var selectedTask: TaskItem?
     var banner: BannerMessage?
+    /// Set by tapping a #tag stamp anywhere (a row, or inside a task's own
+    /// detail sheet) — TodayView consumes it into its own search field and
+    /// clears it, since that's the only place search actually lives.
+    var pendingSearchQuery: String?
     /// Armed by delete, skip, and marking a task done — the one place all three
     /// converge so the toast and its 4-second window live in a single spot.
     var pendingUndo: PendingUndo?
@@ -760,6 +764,30 @@ final class AppModel {
         applyLocally([updated])
         InkHaptics.tick()
         pendingUndo = PendingUndo(message: "Skipped “\(task.title)”", restore: [task], removeIfUndone: [])
+
+        inFlightIDs.insert(updated.id)
+        defer { inFlightIDs.remove(updated.id) }
+        do {
+            try await store.upsert([updated])
+            await notifyDataChanged()
+        } catch {
+            await queueForLater([updated], error: error)
+        }
+    }
+
+    /// Called from the "Snooze" action on a due-task notification. Pushes the
+    /// task's real due date an hour out from right now — not just the one
+    /// notification — so it also stops reading as Late/Today in the app
+    /// itself, matching what "snooze" means everywhere else on the phone,
+    /// rather than quieting the lock screen while the task stays stuck.
+    func snooze(_ task: TaskItem) async {
+        var updated = task
+        updated.dueAt = Date().addingTimeInterval(3600)
+        updated.hasTime = true
+        updated.updatedAt = Date()
+        applyLocally([updated])
+        InkHaptics.tick()
+        pendingUndo = PendingUndo(message: "Snoozed “\(task.title)”", restore: [task], removeIfUndone: [])
 
         inFlightIDs.insert(updated.id)
         defer { inFlightIDs.remove(updated.id) }

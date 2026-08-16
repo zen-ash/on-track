@@ -15,6 +15,7 @@ actor Reminders {
 
     func sync(with tasks: [TaskItem]) async {
         let center = UNUserNotificationCenter.current()
+        NotificationDelegate.registerCategories()
 
         // iOS caps pending local notifications at 64; take the soonest.
         let due = tasks
@@ -40,6 +41,7 @@ actor Reminders {
             content.title = task.title
             content.body = task.isRecurring ? Recurrence.describe(task.recurrence ?? "") : "Due now."
             content.sound = .default
+            content.categoryIdentifier = NotificationDelegate.categoryIdentifier
             content.userInfo = ["taskId": task.id.uuidString]
 
             let components = Calendar.current.dateComponents(

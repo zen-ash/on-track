@@ -6,13 +6,43 @@ struct TodayView: View {
     /// toast in any obviously-reversible-feeling way, so it gets an actual
     /// question instead of a silent full-swipe.
     @State private var pendingEndSeries: TaskItem?
+    @State private var searchText = ""
+
+    private var isSearching: Bool {
+        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Top-level tasks only — subtasks aren't shown as rows of their own
+    /// anywhere else in this list either. Matches title, notes and tags;
+    /// deliberately not scoped to today or to open tasks, since the whole
+    /// point is finding something the grouped sections wouldn't surface —
+    /// including a task finished weeks ago.
+    private var searchResults: [TaskItem] {
+        guard isSearching else { return [] }
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let options: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
+        return model.tasks
+            .filter { $0.parentId == nil }
+            .filter { task in
+                task.title.range(of: query, options: options) != nil ||
+                    (task.notes?.range(of: query, options: options) != nil) ||
+                    task.tags.contains { $0.range(of: query, options: options) != nil }
+            }
+            .inWorkingOrder()
+    }
 
     var body: some View {
         Group {
-            if model.openTasks.isEmpty && model.completedToday.isEmpty {
+            if model.tasks.isEmpty {
                 EmptyState()
             } else {
-                list
+                VStack(spacing: 0) {
+                    searchField
+                        .padding(.horizontal, 20)
+                        .padding(.top, 6)
+                        .padding(.bottom, 4)
+                    list
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -34,23 +64,99 @@ struct TodayView: View {
         } message: {
             Text("This stops every future occurrence, not just this one. You can undo right after.")
         }
+        // Set by tapping a #tag stamp anywhere, including from inside a
+        // task's own detail sheet — this is the one place that actually
+        // owns the search field, so it's what consumes the request.
+        .onChange(of: model.pendingSearchQuery) { _, newValue in
+            guard let newValue else { return }
+            searchText = newValue
+            model.pendingSearchQuery = nil
+        }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 13, weight: .black))
+                .foregroundStyle(Ink.inkSoft)
+                .accessibilityHidden(true)
+
+            // Left un-combined with the icon/clear button on purpose: a
+            // TextField needs to stay its own element for VoiceOver to be
+            // able to focus and type into it at all.
+            TextField("Search tasks", text: $searchText)
+                .inkBody()
+                .foregroundStyle(Ink.ink)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .accessibilityLabel("Search tasks")
+
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundStyle(Ink.inkFaint)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background {
+            RoughRect(seed: 450, wobble: 1.6, corner: 5)
+                .stroke(Ink.ink.opacity(0.3), lineWidth: 1.3)
+        }
     }
 
     private var list: some View {
         List {
-            section("Late", tasks: model.overdueTasks, seed: 401, alarming: true)
-            section("Today", tasks: model.todayTasks, seed: 402)
-            section("Next", tasks: model.upcomingTasks, seed: 403)
-
-            if !model.completedToday.isEmpty {
-                Section {
-                    ForEach(model.completedToday) { task in
-                        row(task)
+            if isSearching {
+                if searchResults.isEmpty {
+                    Text("No tasks match “\(searchText.trimmingCharacters(in: .whitespacesAndNewlines))”")
+                        .inkBodySmall()
+                        .foregroundStyle(Ink.inkSoft)
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                        .padding(.top, 24)
+                } else {
+                    Section {
+                        ForEach(searchResults) { task in
+                            row(task)
+                        }
+                    } header: {
+                        SectionRule(title: "Results", trailing: "\(searchResults.count)", seed: 405)
+                            .padding(.top, 14)
+                            .padding(.bottom, 4)
                     }
-                } header: {
-                    SectionRule(title: "Done today", trailing: "\(model.completedToday.count)", seed: 404)
-                        .padding(.top, 14)
-                        .padding(.bottom, 4)
+                }
+            } else if model.openTasks.isEmpty && model.completedToday.isEmpty {
+                // Nothing live today, but model.tasks isn't empty — otherwise
+                // this screen wouldn't have a search field at all — so this is
+                // older history rather than a true fresh-install empty state.
+                Text(model.moodLine)
+                    .inkBodySmall()
+                    .foregroundStyle(Ink.inkSoft)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .padding(.top, 24)
+            } else {
+                section("Late", tasks: model.overdueTasks, seed: 401, alarming: true)
+                section("Today", tasks: model.todayTasks, seed: 402)
+                section("Next", tasks: model.upcomingTasks, seed: 403)
+
+                if !model.completedToday.isEmpty {
+                    Section {
+                        ForEach(model.completedToday) { task in
+                            row(task)
+                        }
+                    } header: {
+                        SectionRule(title: "Done today", trailing: "\(model.completedToday.count)", seed: 404)
+                            .padding(.top, 14)
+                            .padding(.bottom, 4)
+                    }
                 }
             }
 
@@ -147,6 +253,20 @@ struct TodayView: View {
                 } else {
                     Button("Delete", role: .destructive) {
                         Task { await model.delete(task) }
+                    }
+                }
+                // The row combines its children for VoiceOver (see TaskRow),
+                // so a #tag stamp's own tap target isn't otherwise reachable
+                // — repeated here the same way swipe actions already are,
+                // capped at the same two tags the stamps themselves show.
+                if task.tags.count > 0 {
+                    Button("Filter by tag \(task.tags[0])") {
+                        model.pendingSearchQuery = task.tags[0]
+                    }
+                }
+                if task.tags.count > 1 {
+                    Button("Filter by tag \(task.tags[1])") {
+                        model.pendingSearchQuery = task.tags[1]
                     }
                 }
             }

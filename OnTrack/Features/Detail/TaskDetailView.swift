@@ -8,6 +8,7 @@ struct TaskDetailView: View {
     @State private var hasDueDate: Bool
     @State private var isBreakingDown = false
     @State private var newSubtask = ""
+    @State private var newTag = ""
 
     init(task: TaskItem) {
         _draft = State(initialValue: task)
@@ -28,6 +29,8 @@ struct TaskDetailView: View {
                     titleField
                     schedule
                     priorityPicker
+                    effortSection
+                    tagsEditor
                     subtaskSection
                     notesField
                     dangerZone
@@ -171,6 +174,205 @@ struct TaskDetailView: View {
         case 3: return "Urgent priority"
         default: return "No priority"
         }
+    }
+
+    // MARK: - Effort (energy + estimate)
+
+    /// Both of these are read by the planning function on the server —
+    /// `estimate_minutes`/`energy` in supabase/functions/ai/index.ts — so an
+    /// AI guess that's wrong, or a typed task that never got one set at all,
+    /// was previously stuck degrading its own planning input with no way to
+    /// fix it. Grouped together since they answer the same underlying
+    /// question: how much of a day does this actually take.
+    private var effortSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SectionRule(title: "For planning", seed: 717)
+            energyPicker
+            estimatePicker
+        }
+    }
+
+    private var energyPicker: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Energy").inkBodySmall().foregroundStyle(Ink.inkSoft)
+            HStack(spacing: 8) {
+                energyButton(nil, label: "none", seed: 730)
+                energyButton(.low, label: "low", seed: 731)
+                energyButton(.medium, label: "medium", seed: 732)
+                energyButton(.high, label: "high", seed: 733)
+            }
+        }
+    }
+
+    private func energyButton(_ value: TaskEnergy?, label: String, seed: UInt64) -> some View {
+        let isSelected = draft.energy == value
+        return Button {
+            InkHaptics.tick()
+            draft.energy = value
+        } label: {
+            Text(label)
+                .inkStamp(11)
+                .stampCase()
+                .foregroundStyle(isSelected ? Ink.paper : Ink.ink)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 9)
+                .background {
+                    if isSelected {
+                        RoughRect(seed: seed, wobble: 1.5, corner: 4).fill(Ink.ink)
+                    } else {
+                        RoughRect(seed: seed, wobble: 1.5, corner: 4)
+                            .stroke(Ink.ink.opacity(0.4), lineWidth: 1.3)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(value == nil ? "No energy level set" : "\(label) energy")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private var estimatePicker: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Roughly how long").inkBodySmall().foregroundStyle(Ink.inkSoft)
+            HStack(spacing: 8) {
+                ForEach(Array(estimateOptions.enumerated()), id: \.offset) { index, value in
+                    estimateButton(value, label: estimateOptionLabel(value), seed: 740 + UInt64(index))
+                }
+            }
+        }
+    }
+
+    /// Always includes whatever's actually set, even when it isn't one of
+    /// the standard presets — capture can set `estimateMinutes` to any
+    /// integer, not just these five, and a picker limited to presets alone
+    /// would otherwise show nothing selected for a real value like 90 and
+    /// silently read as "no estimate" when one is actually set.
+    private var estimateOptions: [Int?] {
+        var options: [Int?] = [nil, 15, 30, 60, 120]
+        if let current = draft.estimateMinutes, !options.contains(current) {
+            options.append(current)
+            options.sort { ($0 ?? -1) < ($1 ?? -1) }
+        }
+        return options
+    }
+
+    private func estimateOptionLabel(_ value: Int?) -> String {
+        guard let value else { return "none" }
+        if value < 60 { return "\(value)m" }
+        let hours = value / 60
+        let remainder = value % 60
+        return remainder == 0 ? "\(hours)h" : "\(hours)h \(remainder)m"
+    }
+
+    private func estimateButton(_ value: Int?, label: String, seed: UInt64) -> some View {
+        let isSelected = draft.estimateMinutes == value
+        return Button {
+            InkHaptics.tick()
+            draft.estimateMinutes = value
+        } label: {
+            Text(label)
+                .inkStamp(11)
+                .stampCase()
+                .foregroundStyle(isSelected ? Ink.paper : Ink.ink)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 9)
+                .background {
+                    if isSelected {
+                        RoughRect(seed: seed, wobble: 1.5, corner: 4).fill(Ink.ink)
+                    } else {
+                        RoughRect(seed: seed, wobble: 1.5, corner: 4)
+                            .stroke(Ink.ink.opacity(0.4), lineWidth: 1.3)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(value == nil ? "No estimate set" : "About \(label)")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    // MARK: - Tags
+
+    /// Previously read-only decoration: whatever capture happened to guess,
+    /// with no way to add, remove, or browse by one. Tapping an existing tag
+    /// hands off to Search rather than duplicating a filter here — the same
+    /// #tag stamp on a row does the same thing.
+    private var tagsEditor: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionRule(title: "Tags", seed: 718)
+
+            if !draft.tags.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(draft.tags, id: \.self) { tag in
+                            tagChip(tag)
+                        }
+                    }
+                }
+            }
+
+            HStack(spacing: 10) {
+                TextField("Add a tag", text: $newTag)
+                    .inkBodySmall()
+                    .tint(Ink.ink)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .onSubmit { addTag() }
+
+                Button("Add", action: addTag)
+                    .inkStamp(10)
+                    .stampCase()
+                    .foregroundStyle(Ink.ink)
+                    .disabled(normalizedNewTag.isEmpty)
+            }
+        }
+    }
+
+    private func tagChip(_ tag: String) -> some View {
+        HStack(spacing: 6) {
+            Button {
+                model.pendingSearchQuery = tag
+                dismiss()
+            } label: {
+                Text("#\(tag)")
+                    .inkStamp(11)
+                    .stampCase()
+                    .foregroundStyle(Ink.ink)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Filter by tag \(tag)")
+
+            Button {
+                draft.tags.removeAll { $0 == tag }
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Ink.inkFaint)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Remove tag \(tag)")
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background {
+            RoughRect(seed: tag.inkSeed, wobble: 1.3, corner: 3)
+                .stroke(Ink.ink.opacity(0.4), lineWidth: 1.2)
+        }
+    }
+
+    private var normalizedNewTag: String {
+        newTag
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+    }
+
+    private func addTag() {
+        let tag = normalizedNewTag
+        guard !tag.isEmpty,
+              !draft.tags.contains(where: { $0.caseInsensitiveCompare(tag) == .orderedSame }) else {
+            newTag = ""
+            return
+        }
+        draft.tags.append(tag)
+        newTag = ""
     }
 
     private var subtaskSection: some View {

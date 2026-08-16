@@ -34,14 +34,42 @@ struct TaskRow: View {
                     .multilineTextAlignment(.leading)
 
                 if !stamps.isEmpty {
-                    HStack(spacing: 5) {
-                        ForEach(stamps, id: \.text) { stamp in
-                            StampLabel(
-                                text: stamp.text,
-                                filled: stamp.filled,
-                                tint: stamp.tint,
-                                seed: task.seed &+ UInt64(stamp.text.count)
-                            )
+                    // A row can carry due/priority/recurrence/energy/estimate
+                    // plus two tags — enough, together, that an HStack alone
+                    // would compress and wrap text *inside* a stamp rather
+                    // than let the row overflow. Scrolling instead keeps
+                    // every stamp legible on one line, at the cost of the
+                    // rightmost ones needing a swipe to see.
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 5) {
+                            ForEach(stamps, id: \.text) { stamp in
+                                if let tag = stamp.tagValue {
+                                    // A real tap target, not just decoration —
+                                    // but the row below ignores its children for
+                                    // VoiceOver (see the accessibilityElement
+                                    // modifier), so this is only reachable with
+                                    // sight; TodayView.row(_:) repeats it as an
+                                    // explicit accessibility action per tag.
+                                    Button {
+                                        model.pendingSearchQuery = tag
+                                    } label: {
+                                        StampLabel(
+                                            text: stamp.text,
+                                            filled: stamp.filled,
+                                            tint: stamp.tint,
+                                            seed: task.seed &+ UInt64(stamp.text.count)
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                } else {
+                                    StampLabel(
+                                        text: stamp.text,
+                                        filled: stamp.filled,
+                                        tint: stamp.tint,
+                                        seed: task.seed &+ UInt64(stamp.text.count)
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -93,6 +121,12 @@ struct TaskRow: View {
         if let recurrence = task.recurrence {
             parts.append("Repeats \(Recurrence.describe(recurrence))")
         }
+        if let energy = task.energy {
+            parts.append("\(energyLabel(energy)) energy")
+        }
+        if let minutes = task.estimateMinutes {
+            parts.append("About \(estimateLabel(minutes))")
+        }
         if !task.tags.isEmpty {
             parts.append(task.tags.prefix(2).map { "Tagged \($0)" }.joined(separator: ", "))
         }
@@ -109,6 +143,9 @@ struct TaskRow: View {
         let text: String
         var filled: Bool = false
         var tint: Color = Ink.ink
+        /// Non-nil only for a #tag stamp — the one kind of stamp that's an
+        /// actual control (filters Search) rather than pure decoration.
+        var tagValue: String? = nil
     }
 
     private var stamps: [Stamp] {
@@ -127,12 +164,36 @@ struct TaskRow: View {
         if let recurrence = task.recurrence {
             out.append(Stamp(text: Recurrence.describe(recurrence)))
         }
+        if let energy = task.energy {
+            // Bare word, no "energy" suffix — matches how nothing else here
+            // is labelled either ("!!!" doesn't say "priority", "3h" doesn't
+            // say "estimate"); the spoken form below still says it in full.
+            out.append(Stamp(text: energyLabel(energy)))
+        }
+        if let minutes = task.estimateMinutes {
+            out.append(Stamp(text: estimateLabel(minutes)))
+        }
         for tag in task.tags.prefix(2) {
-            out.append(Stamp(text: "#\(tag)"))
+            out.append(Stamp(text: "#\(tag)", tagValue: tag))
         }
         if task.source == .voice && task.dueStamp == nil {
             out.append(Stamp(text: "spoken"))
         }
         return out
+    }
+
+    private func energyLabel(_ energy: TaskEnergy) -> String {
+        switch energy {
+        case .low: return "low"
+        case .medium: return "medium"
+        case .high: return "high"
+        }
+    }
+
+    private func estimateLabel(_ minutes: Int) -> String {
+        if minutes < 60 { return "\(minutes)m" }
+        let hours = minutes / 60
+        let remainder = minutes % 60
+        return remainder == 0 ? "\(hours)h" : "\(hours)h \(remainder)m"
     }
 }
