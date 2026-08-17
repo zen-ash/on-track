@@ -30,3 +30,6 @@ supabase/.env
 *.mobileprovision
 .env
 .env.*
+
+# Marketing assets — screenshots and briefs, kept local rather than in history.
+Marketing/
